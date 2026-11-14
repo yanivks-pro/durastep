@@ -8,8 +8,8 @@ as intended.
 [![CI](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml/badge.svg)](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-> **🚧 Early development.** Durastep is in milestone M0 (foundations): the build, CI, database schema and
-> design decisions are in place, but there is no engine yet. See the [roadmap](#roadmap).
+> **🚧 Early development.** The foundations (M0) are complete: the build, CI, database schema and first
+> design decisions are in place. The engine itself arrives in M1. See the [roadmap](#roadmap).
 
 ## The problem
 
@@ -84,8 +84,8 @@ integration tests.
 
 | Milestone | What it delivers | Status |
 |---|---|---|
-| M0 Foundations | Build, CI, database schema, first design decisions | 🚧 In progress |
-| M1 Core idea (v0.1) | Kill it mid-workflow, restart, and it resumes exactly | ⏳ Planned |
+| M0 Foundations | Build, CI, database schema, first design decisions | ✅ Done |
+| M1 Core idea (v0.1) | Kill it mid-workflow, restart, and it resumes exactly | 🚧 Next |
 | M2 Reliability (v0.2) | Retries, timeouts and durable timers that can sleep for days | ⏳ Planned |
 | M3 Distributed (v0.3) | Many instances, leases and fencing; chaos test with 0 lost and 0 duplicates | ⏳ Planned |
 | M4 Interaction (v0.4) | Signals, cancellation, sagas and parallel steps | ⏳ Planned |
