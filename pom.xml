@@ -29,6 +29,7 @@
     <maven.compiler.release>${java.release}</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <postgres.image>postgres:16-alpine</postgres.image>
 
     <postgresql.version>42.7.14</postgresql.version>
     <slf4j.version>2.0.20</slf4j.version>
@@ -167,6 +168,11 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <systemPropertyVariables>
+            <postgres.image>${postgres.image}</postgres.image>
+          </systemPropertyVariables>
+        </configuration>
         <executions>
           <execution>
             <goals>
