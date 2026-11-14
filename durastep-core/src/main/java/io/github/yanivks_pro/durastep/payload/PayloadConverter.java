@@ -7,4 +7,8 @@ public interface PayloadConverter {
   Payload toPayload(Object value);
 
   Object fromPayload(Payload payload, Type type);
+
+  Payload toArguments(Object[] arguments);
+
+  Object[] fromArguments(Payload arguments, Type[] types);
 }

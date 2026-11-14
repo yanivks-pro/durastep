@@ -27,7 +27,7 @@ final class History {
   }
 
   History scheduled(String activity, Object... arguments) {
-    return append(next(), new ActivityScheduled(activity, JSON.toPayload(List.of(arguments))));
+    return append(next(), new ActivityScheduled(activity, JSON.toArguments(arguments)));
   }
 
   History completed(int scheduledSeq, Object result) {

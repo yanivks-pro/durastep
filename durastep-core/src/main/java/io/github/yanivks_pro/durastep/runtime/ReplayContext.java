@@ -10,8 +10,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.Arrays;
-import java.util.List;
 import java.util.Random;
 import java.util.UUID;
 
@@ -104,8 +102,7 @@ final class ReplayContext implements WorkflowContext {
     String activity = activityInterface.getSimpleName() + "." + method.getName();
     int stepIndex = nextStep++;
     if (stepIndex >= history.steps().size()) {
-      List<Object> arguments = args == null ? List.of() : Arrays.asList(args);
-      newCommand = new ScheduleActivity(activity, converter.toPayload(arguments));
+      newCommand = new ScheduleActivity(activity, converter.toArguments(args));
       throw suspend();
     }
     ReplayHistory.Step step = history.steps().get(stepIndex);
