@@ -39,7 +39,7 @@
     <archunit.version>1.5.1</archunit.version>
     <testcontainers.version>2.0.5</testcontainers.version>
 
-    <errorprone.version>2.51.0</errorprone.version>
+    <errorprone.version>2.52.0</errorprone.version>
     <google-java-format.version>1.36.1</google-java-format.version>
     <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
     <maven-surefire-plugin.version>3.6.1</maven-surefire-plugin.version>
