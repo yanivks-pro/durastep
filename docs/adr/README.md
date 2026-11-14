@@ -11,3 +11,4 @@ for the rules, and [the template](0000-template.md) for the format.
 | [0004](0004-java-25-virtual-threads.md) | Java 25 and virtual threads | Accepted |
 | [0005](0005-maven-multi-module.md) | Maven multi-module build | Accepted |
 | [0006](0006-plain-jdbc-minimal-dependencies.md) | Plain JDBC and minimal dependencies | Accepted |
+| [0007](0007-schema-migrations-with-flyway.md) | Schema migrations with Flyway | Accepted |
