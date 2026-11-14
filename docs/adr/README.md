@@ -1,0 +1,13 @@
+# Architecture Decision Records
+
+Each significant design decision in Durastep is recorded here. See [ADR-0001](0001-record-architecture-decisions.md)
+for the rules, and [the template](0000-template.md) for the format.
+
+| ADR | Decision | Status |
+|---|---|---|
+| [0001](0001-record-architecture-decisions.md) | Record architecture decisions as ADRs | Accepted |
+| [0002](0002-embedded-library.md) | Embedded library, no engine server | Accepted |
+| [0003](0003-postgres-only.md) | Postgres only | Accepted |
+| [0004](0004-java-25-virtual-threads.md) | Java 25 and virtual threads | Accepted |
+| [0005](0005-maven-multi-module.md) | Maven multi-module build | Accepted |
+| [0006](0006-plain-jdbc-minimal-dependencies.md) | Plain JDBC and minimal dependencies | Accepted |
