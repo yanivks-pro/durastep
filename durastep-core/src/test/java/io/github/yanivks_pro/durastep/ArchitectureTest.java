@@ -15,4 +15,13 @@ class ArchitectureTest {
   @ArchTest
   static final ArchRule coreDoesNotDependOnSpring =
       noClasses().should().dependOnClassesThat().resideInAPackage("org.springframework..");
+
+  @ArchTest
+  static final ArchRule runtimeIsPure =
+      noClasses()
+          .that()
+          .resideInAPackage("..runtime..")
+          .should()
+          .dependOnClassesThat()
+          .resideInAnyPackage("java.sql..", "javax.sql..", "..store..", "..worker..");
 }
