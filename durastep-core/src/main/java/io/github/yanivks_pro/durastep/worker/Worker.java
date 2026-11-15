@@ -9,6 +9,8 @@ import io.github.yanivks_pro.durastep.runtime.WorkflowRegistry;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRuntime;
 import io.github.yanivks_pro.durastep.store.ActivityToRun;
 import io.github.yanivks_pro.durastep.store.ClaimedTask;
+import io.github.yanivks_pro.durastep.store.CrashPoint;
+import io.github.yanivks_pro.durastep.store.CrashPoints;
 import io.github.yanivks_pro.durastep.store.DecisionInput;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import io.github.yanivks_pro.durastep.store.StaleTaskException;
@@ -32,6 +34,7 @@ public final class Worker {
   private final String owner;
   private final Duration lease;
   private final Duration pollInterval;
+  private final CrashPoints crashPoints;
 
   private volatile boolean running;
   private Thread decider;
@@ -44,7 +47,8 @@ public final class Worker {
       ActivityRuntime activityRuntime,
       String owner,
       Duration lease,
-      Duration pollInterval) {
+      Duration pollInterval,
+      CrashPoints crashPoints) {
     this.store = store;
     this.workflows = workflows;
     this.workflowRuntime = workflowRuntime;
@@ -52,6 +56,7 @@ public final class Worker {
     this.owner = owner;
     this.lease = lease;
     this.pollInterval = pollInterval;
+    this.crashPoints = crashPoints;
   }
 
   public synchronized void start() {
@@ -150,6 +155,7 @@ public final class Worker {
             activity.arguments(),
             activity.workflowId(),
             activity.scheduledSeq());
+    crashPoints.reached(CrashPoint.AFTER_ACTIVITY_RAN);
     try {
       store.completeActivity(task, result);
     } catch (StaleTaskException e) {

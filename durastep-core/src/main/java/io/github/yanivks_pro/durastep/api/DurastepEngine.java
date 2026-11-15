@@ -7,6 +7,7 @@ import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.WorkflowDefinition;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRegistry;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRuntime;
+import io.github.yanivks_pro.durastep.store.CrashPoints;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import io.github.yanivks_pro.durastep.worker.Worker;
 import java.time.Duration;
@@ -36,7 +37,6 @@ import org.flywaydb.core.Flyway;
  */
 public final class DurastepEngine implements AutoCloseable {
 
-  private static final Duration LEASE = Duration.ofSeconds(30);
   private static final Duration POLL_INTERVAL = Duration.ofMillis(100);
   private static final Duration STOP_GRACE = Duration.ofSeconds(10);
 
@@ -59,8 +59,9 @@ public final class DurastepEngine implements AutoCloseable {
             new WorkflowRuntime(converter),
             new ActivityRuntime(builder.activities, converter),
             newOwnerName(),
-            LEASE,
-            POLL_INTERVAL);
+            builder.leaseDuration,
+            POLL_INTERVAL,
+            CrashPoints.NONE);
     this.client = new StoreBackedClient(store, converter, POLL_INTERVAL);
   }
 
@@ -135,6 +136,7 @@ public final class DurastepEngine implements AutoCloseable {
     private DataSource dataSource;
     private String schema = JdbcWorkflowStore.DEFAULT_SCHEMA;
     private boolean applyMigrations = true;
+    private Duration leaseDuration = Duration.ofSeconds(30);
     private final WorkflowRegistry workflows = new WorkflowRegistry();
     private final ActivityRegistry activities = new ActivityRegistry();
 
@@ -204,6 +206,23 @@ public final class DurastepEngine implements AutoCloseable {
      */
     public Builder applyMigrations(boolean applyMigrations) {
       this.applyMigrations = applyMigrations;
+      return this;
+    }
+
+    /**
+     * Sets how long a worker may hold a task before another worker may take it over. If an instance
+     * crashes, its unfinished work resumes elsewhere after at most this long. Defaults to 30
+     * seconds.
+     *
+     * @param leaseDuration a positive duration
+     * @return this builder
+     * @throws IllegalArgumentException if {@code leaseDuration} is zero or negative
+     */
+    public Builder leaseDuration(Duration leaseDuration) {
+      if (leaseDuration.isNegative() || leaseDuration.isZero()) {
+        throw new IllegalArgumentException("leaseDuration must be positive, was " + leaseDuration);
+      }
+      this.leaseDuration = leaseDuration;
       return this;
     }
 

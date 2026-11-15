@@ -39,6 +39,7 @@ public final class JdbcWorkflowStore {
   private static final Pattern SCHEMA_NAME = Pattern.compile("[a-z_][a-z0-9_]{0,62}");
 
   private final Transactions transactions;
+  private final CrashPoints crashPoints;
   private final EventCodec codec = new EventCodec();
   private final String workflows;
   private final String history;
@@ -50,11 +51,16 @@ public final class JdbcWorkflowStore {
   }
 
   public JdbcWorkflowStore(DataSource dataSource, String schema) {
+    this(dataSource, schema, CrashPoints.NONE);
+  }
+
+  public JdbcWorkflowStore(DataSource dataSource, String schema, CrashPoints crashPoints) {
     if (!SCHEMA_NAME.matcher(schema).matches()) {
       throw new IllegalArgumentException(
           "schema must be a lower-case Postgres identifier, was " + schema);
     }
     this.transactions = new Transactions(dataSource);
+    this.crashPoints = crashPoints;
     this.workflows = schema + ".workflows";
     this.history = schema + ".history_events";
     this.tasks = schema + ".tasks";
@@ -79,6 +85,7 @@ public final class JdbcWorkflowStore {
           if (inserted == 0) {
             return new StartResult(false, existingType(connection, workflowId));
           }
+          crashPoints.reached(CrashPoint.MID_START);
           appendEvent(connection, workflowId, 1, new WorkflowStarted(input), null);
           update(
               connection,
@@ -232,6 +239,7 @@ public final class JdbcWorkflowStore {
               }
             }
           }
+          crashPoints.reached(CrashPoint.MID_DECISION_COMMIT);
           update(
               connection,
               "UPDATE " + workflows + " SET history_length = ?, updated_at = now() WHERE id = ?",
@@ -314,6 +322,7 @@ public final class JdbcWorkflowStore {
               codec.typeOf(outcome),
               codec.payloadOf(outcome),
               "activity-" + task.activitySeq());
+          crashPoints.reached(CrashPoint.MID_ACTIVITY_COMPLETE);
           update(
               connection,
               "INSERT INTO "

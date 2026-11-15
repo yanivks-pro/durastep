@@ -41,5 +41,5 @@ while user code runs.
   frozen worker are rejected instead of applied twice.
 - **Negative:** because claim and commit are separate, a step can be worked on twice (for example, an activity
   that runs, then its worker dies before committing). This is the at-least-once behaviour that idempotency
-  keys address (ADR-0010, written together with the crash tests).
+  keys address ([ADR-0010](0010-at-least-once-with-idempotency-keys.md)).
 - **Follow-ups:** `NOTIFY` is issued inside the same transaction in M3, so it is delivered only on commit.
