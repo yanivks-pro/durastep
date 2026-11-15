@@ -1,6 +1,7 @@
 package io.github.yanivks_pro.durastep;
 
 import io.github.yanivks_pro.durastep.api.ActivityContext;
+import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.DurastepEngine;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
@@ -16,6 +17,8 @@ public final class ShopApp {
   public static final String HANG_IN_RESERVE_STOCK = "hang-in-reserve-stock";
   public static final String RUN_TO_COMPLETION = "run-to-completion";
   public static final Duration LEASE = Duration.ofSeconds(2);
+  public static final ActivityOptions ACTIVITY_OPTIONS =
+      ActivityOptions.builder().attemptTimeout(Duration.ofSeconds(5)).build();
 
   public record Order(String id, long cents) {}
 
@@ -30,7 +33,7 @@ public final class ShopApp {
   public static final class OrderWorkflow implements Workflow<Order, String> {
     @Override
     public String run(WorkflowContext ctx, Order order) {
-      ShopActivities shop = ctx.activities(ShopActivities.class);
+      ShopActivities shop = ctx.activities(ShopActivities.class, ACTIVITY_OPTIONS);
       String chargeId = shop.chargeCard(order.id(), order.cents());
       shop.reserveStock(order.id());
       shop.sendEmail(order.id());

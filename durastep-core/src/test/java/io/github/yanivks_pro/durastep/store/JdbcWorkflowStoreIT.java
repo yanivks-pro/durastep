@@ -2,10 +2,12 @@ package io.github.yanivks_pro.durastep.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 
 import io.github.yanivks_pro.durastep.TestPostgres;
 import io.github.yanivks_pro.durastep.activity.ActivityResult.Completed;
 import io.github.yanivks_pro.durastep.activity.ActivityResult.Failed;
+import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
 import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
@@ -14,6 +16,7 @@ import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
 import io.github.yanivks_pro.durastep.runtime.Failure;
 import io.github.yanivks_pro.durastep.runtime.HistoryEntry;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -121,7 +124,11 @@ class JdbcWorkflowStoreIT {
     DecisionInput input = store.loadDecision(decide);
 
     store.commitDecision(
-        decide, input, List.of(new ScheduleActivity("OrderActivities.chargeCard", CHARGE_ARGS)));
+        decide,
+        input,
+        List.of(
+            new ScheduleActivity(
+                "OrderActivities.chargeCard", CHARGE_ARGS, ActivityOptions.DEFAULT)));
 
     assertThat(input.workflowType()).isEqualTo("OrderWorkflow");
     assertThat(input.history())
@@ -132,7 +139,14 @@ class JdbcWorkflowStoreIT {
     assertThat(count("tasks WHERE kind = 'WORKFLOW'")).isZero();
     ClaimedTask activity = claim(TaskKind.ACTIVITY);
     assertThat(store.loadActivity(activity))
-        .isEqualTo(new ActivityToRun("order-42", 2, "OrderActivities.chargeCard", CHARGE_ARGS));
+        .isEqualTo(
+            new ActivityToRun(
+                "order-42",
+                2,
+                "OrderActivities.chargeCard",
+                CHARGE_ARGS,
+                ActivityOptions.DEFAULT,
+                1));
   }
 
   @Test
@@ -175,7 +189,8 @@ class JdbcWorkflowStoreIT {
   @Test
   void aFailedWorkflowKeepsItsFailure() {
     store.completeActivity(
-        workflowWaitingForChargeCard(), new Failed(new Failure("CardDeclined", "card declined")));
+        workflowWaitingForChargeCard(),
+        new Failed(new Failure("CardDeclined", "card declined"), false));
     ClaimedTask decide = claim(TaskKind.WORKFLOW);
     DecisionInput input = store.loadDecision(decide);
 
@@ -200,7 +215,9 @@ class JdbcWorkflowStoreIT {
                 store.commitDecision(
                     frozen,
                     input,
-                    List.of(new ScheduleActivity("OrderActivities.chargeCard", CHARGE_ARGS))))
+                    List.of(
+                        new ScheduleActivity(
+                            "OrderActivities.chargeCard", CHARGE_ARGS, ActivityOptions.DEFAULT))))
         .isInstanceOf(StaleTaskException.class);
 
     assertThat(eventTypes("order-42")).containsExactly("WORKFLOW_STARTED");
@@ -214,7 +231,9 @@ class JdbcWorkflowStoreIT {
     store.commitDecision(
         decide,
         store.loadDecision(decide),
-        List.of(new ScheduleActivity("OrderActivities.chargeCard", CHARGE_ARGS)));
+        List.of(
+            new ScheduleActivity(
+                "OrderActivities.chargeCard", CHARGE_ARGS, ActivityOptions.DEFAULT)));
     ClaimedTask frozen =
         store.claim(TaskKind.ACTIVITY, "default", "worker-a", Duration.ZERO).orElseThrow();
     ClaimedTask takeover =
@@ -251,6 +270,93 @@ class JdbcWorkflowStoreIT {
   }
 
   @Test
+  void aRetryPutsTheTaskBackLaterWithTheNextAttemptNumberAndTheError() throws SQLException {
+    ClaimedTask first = workflowWaitingForChargeCard();
+    Failure timeout = new Failure("java.net.SocketTimeoutException", "read timed out");
+
+    boolean retried = store.retryActivity(first, timeout, Duration.ofSeconds(30), Optional.empty());
+
+    assertThat(retried).isTrue();
+    assertThat(count("tasks WHERE kind = 'ACTIVITY' AND attempt = 2 AND lease_owner IS NULL"))
+        .isEqualTo(1);
+    assertThat(count("tasks WHERE last_error->>'message' = 'read timed out'")).isEqualTo(1);
+    assertThat(count("tasks WHERE visible_at > now() + interval '25 seconds'")).isEqualTo(1);
+    assertThat(store.claim(TaskKind.ACTIVITY, "default", "worker-b", LEASE)).isEmpty();
+    assertThat(count("inbox")).isZero();
+  }
+
+  @Test
+  void aRetriedTaskIsClaimedAgainAsTheNextAttemptOnceItsDelayHasPassed() throws SQLException {
+    ClaimedTask first = workflowWaitingForChargeCard();
+    store.retryActivity(first, new Failure("E", "m"), Duration.ofMillis(1), Optional.empty());
+
+    await()
+        .atMost(Duration.ofSeconds(5))
+        .until(() -> store.claim(TaskKind.ACTIVITY, "default", "worker-b", LEASE).isPresent());
+
+    assertThat(count("tasks WHERE kind = 'ACTIVITY' AND attempt = 2 AND lease_owner = 'worker-b'"))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void aRetryThatWouldEndAfterTheTotalTimeoutBecomesTheFinalFailure() throws SQLException {
+    ClaimedTask first = workflowWaitingForChargeCard();
+    Failure error = new Failure("java.net.SocketTimeoutException", "read timed out");
+
+    boolean retried =
+        store.retryActivity(
+            first, error, Duration.ofMinutes(10), Optional.of(Duration.ofMinutes(5)));
+
+    assertThat(retried).isFalse();
+    assertThat(count("tasks WHERE kind = 'ACTIVITY'")).isZero();
+    assertThat(store.loadDecision(claim(TaskKind.WORKFLOW)).inbox())
+        .extracting(InboxEntry::event)
+        .containsExactly(new ActivityFailed(2, error, 1));
+  }
+
+  @Test
+  void aFinalFailureRecordsHowManyAttemptsWereMade() {
+    ClaimedTask first = workflowWaitingForChargeCard();
+    store.retryActivity(first, new Failure("E", "1"), Duration.ofMillis(1), Optional.empty());
+    ClaimedTask second =
+        await()
+            .atMost(Duration.ofSeconds(5))
+            .until(
+                () -> store.claim(TaskKind.ACTIVITY, "default", "worker-a", LEASE),
+                Optional::isPresent)
+            .orElseThrow();
+
+    store.completeActivity(second, new Failed(new Failure("E", "2"), false));
+
+    assertThat(second.attempt()).isEqualTo(2);
+    assertThat(store.loadDecision(claim(TaskKind.WORKFLOW)).inbox())
+        .extracting(InboxEntry::event)
+        .containsExactly(new ActivityFailed(2, new Failure("E", "2"), 2));
+  }
+
+  @Test
+  void anExtendedLeaseKeepsOtherWorkersAway() {
+    store.start("order-42", "OrderWorkflow", ORDER);
+    ClaimedTask task =
+        store.claim(TaskKind.WORKFLOW, "default", "worker-a", Duration.ZERO).orElseThrow();
+
+    store.extendLease(task, Duration.ofMinutes(1));
+
+    assertThat(store.claim(TaskKind.WORKFLOW, "default", "worker-b", LEASE)).isEmpty();
+  }
+
+  @Test
+  void aWorkerThatLostItsTaskCannotExtendItsLease() {
+    store.start("order-42", "OrderWorkflow", ORDER);
+    ClaimedTask frozen =
+        store.claim(TaskKind.WORKFLOW, "default", "worker-a", Duration.ZERO).orElseThrow();
+    assertThat(store.claim(TaskKind.WORKFLOW, "default", "worker-b", LEASE)).isPresent();
+
+    assertThatThrownBy(() -> store.extendLease(frozen, Duration.ofMinutes(1)))
+        .isInstanceOf(StaleTaskException.class);
+  }
+
+  @Test
   void rejectsASchemaNameThatIsNotAPlainIdentifier() {
     assertThatThrownBy(() -> new JdbcWorkflowStore(dataSource, "durastep; DROP TABLE x"))
         .isInstanceOf(IllegalArgumentException.class);
@@ -262,7 +368,9 @@ class JdbcWorkflowStoreIT {
     store.commitDecision(
         decide,
         store.loadDecision(decide),
-        List.of(new ScheduleActivity("OrderActivities.chargeCard", CHARGE_ARGS)));
+        List.of(
+            new ScheduleActivity(
+                "OrderActivities.chargeCard", CHARGE_ARGS, ActivityOptions.DEFAULT)));
     return claim(TaskKind.ACTIVITY);
   }
 
@@ -271,7 +379,7 @@ class JdbcWorkflowStoreIT {
   }
 
   private static ClaimedTask fakeTaskFor(String workflowId) {
-    return new ClaimedTask(0, workflowId, TaskKind.WORKFLOW, null, 0, "reader");
+    return new ClaimedTask(0, workflowId, TaskKind.WORKFLOW, null, 1, 0, "reader");
   }
 
   private static List<String> eventTypes(String workflowId) throws SQLException {

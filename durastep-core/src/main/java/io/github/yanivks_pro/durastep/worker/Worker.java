@@ -1,7 +1,10 @@
 package io.github.yanivks_pro.durastep.worker;
 
 import io.github.yanivks_pro.durastep.activity.ActivityResult;
+import io.github.yanivks_pro.durastep.activity.ActivityResult.Failed;
 import io.github.yanivks_pro.durastep.activity.ActivityRuntime;
+import io.github.yanivks_pro.durastep.activity.Backoff;
+import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.runtime.Command;
 import io.github.yanivks_pro.durastep.runtime.WorkflowDefinition;
@@ -18,6 +21,7 @@ import io.github.yanivks_pro.durastep.store.TaskKind;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -142,22 +146,43 @@ public final class Worker {
     return true;
   }
 
-  private boolean runActivityOnce() {
+  private boolean runActivityOnce() throws InterruptedException {
     Optional<ClaimedTask> claimed = store.claim(TaskKind.ACTIVITY, DEFAULT_QUEUE, owner, lease);
     if (claimed.isEmpty()) {
       return false;
     }
     ClaimedTask task = claimed.get();
     ActivityToRun activity = store.loadActivity(task);
-    ActivityResult result =
-        activityRuntime.execute(
-            activity.activity(),
-            activity.arguments(),
-            activity.workflowId(),
-            activity.scheduledSeq());
-    crashPoints.reached(CrashPoint.AFTER_ACTIVITY_RAN);
+    ActivityOptions options = activity.options();
     try {
-      store.completeActivity(task, result);
+      store.extendLease(task, options.attemptTimeout().plus(lease));
+      ActivityResult result =
+          activityRuntime.execute(
+              activity.activity(),
+              activity.arguments(),
+              activity.workflowId(),
+              activity.scheduledSeq(),
+              options);
+      crashPoints.reached(CrashPoint.AFTER_ACTIVITY_RAN);
+      if (result instanceof Failed failed
+          && failed.retryable()
+          && task.attempt() < options.retryPolicy().maxAttempts()) {
+        Duration delay =
+            Backoff.delayAfter(options.retryPolicy(), task.attempt(), ThreadLocalRandom.current());
+        boolean retried =
+            store.retryActivity(task, failed.failure(), delay, options.totalTimeout());
+        log.info(
+            retried
+                ? "attempt {} of {} for workflow {} failed with {}; retrying in {}"
+                : "attempt {} of {} for workflow {} failed with {}; out of time, not retrying",
+            task.attempt(),
+            activity.activity(),
+            task.workflowId(),
+            failed.failure().type(),
+            delay);
+      } else {
+        store.completeActivity(task, result);
+      }
     } catch (StaleTaskException e) {
       log.warn(
           "discarded the result of {} for workflow {}: {}",

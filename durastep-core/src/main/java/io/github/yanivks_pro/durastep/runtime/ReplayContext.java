@@ -1,5 +1,7 @@
 package io.github.yanivks_pro.durastep.runtime;
 
+import io.github.yanivks_pro.durastep.api.ActivityFailedException;
+import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
@@ -10,6 +12,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.Random;
 import java.util.UUID;
 
@@ -25,7 +28,6 @@ final class ReplayContext implements WorkflowContext {
   private Instant now;
   private boolean suspended;
   private ScheduleActivity newCommand;
-  private Failure activityFailure;
   private NonDeterminismException nonDeterminism;
 
   ReplayContext(String workflowId, ReplayHistory history, PayloadConverter converter) {
@@ -38,6 +40,12 @@ final class ReplayContext implements WorkflowContext {
 
   @Override
   public <T> T activities(Class<T> activityInterface) {
+    return activities(activityInterface, ActivityOptions.DEFAULT);
+  }
+
+  @Override
+  public <T> T activities(Class<T> activityInterface, ActivityOptions options) {
+    Objects.requireNonNull(options, "options");
     if (!activityInterface.isInterface()) {
       throw new IllegalArgumentException(activityInterface.getName() + " is not an interface");
     }
@@ -49,7 +57,7 @@ final class ReplayContext implements WorkflowContext {
               if (method.getDeclaringClass() == Object.class) {
                 return objectMethod(proxy, method, args, activityInterface);
               }
-              return callActivity(activityInterface, method, args);
+              return callActivity(activityInterface, method, args, options);
             });
     return activityInterface.cast(stub);
   }
@@ -83,10 +91,6 @@ final class ReplayContext implements WorkflowContext {
     return newCommand;
   }
 
-  Failure activityFailure() {
-    return activityFailure;
-  }
-
   NonDeterminismException nonDeterminism() {
     return nonDeterminism;
   }
@@ -95,14 +99,15 @@ final class ReplayContext implements WorkflowContext {
     return nextStep;
   }
 
-  private Object callActivity(Class<?> activityInterface, Method method, Object[] args) {
+  private Object callActivity(
+      Class<?> activityInterface, Method method, Object[] args, ActivityOptions options) {
     if (suspended) {
       throw suspension;
     }
     String activity = activityInterface.getSimpleName() + "." + method.getName();
     int stepIndex = nextStep++;
     if (stepIndex >= history.steps().size()) {
-      newCommand = new ScheduleActivity(activity, converter.toArguments(args));
+      newCommand = new ScheduleActivity(activity, converter.toArguments(args), options);
       throw suspend();
     }
     ReplayHistory.Step step = history.steps().get(stepIndex);
@@ -131,8 +136,9 @@ final class ReplayContext implements WorkflowContext {
             : converter.fromPayload(completed.result(), method.getGenericReturnType());
       }
       case ActivityFailed failed -> {
-        activityFailure = failed.failure();
-        throw suspend();
+        now = step.outcome().recordedAt();
+        throw new ActivityFailedException(
+            activity, failed.failure().type(), failed.failure().message(), failed.attempts());
       }
       default -> throw new IllegalStateException("unexpected outcome " + step.outcome());
     };

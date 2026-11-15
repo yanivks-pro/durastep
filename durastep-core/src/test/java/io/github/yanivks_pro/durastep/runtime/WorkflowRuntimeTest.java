@@ -3,7 +3,10 @@ package io.github.yanivks_pro.durastep.runtime;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.yanivks_pro.durastep.api.ActivityFailedException;
+import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
+import io.github.yanivks_pro.durastep.api.RetryPolicy;
 import io.github.yanivks_pro.durastep.payload.JsonPayloadConverter;
 import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
@@ -12,6 +15,7 @@ import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
 import io.github.yanivks_pro.durastep.runtime.OrderExample.Order;
 import io.github.yanivks_pro.durastep.runtime.OrderExample.OrderActivities;
 import io.github.yanivks_pro.durastep.runtime.OrderExample.Receipt;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,7 +34,10 @@ class WorkflowRuntimeTest {
 
     assertThat(decide(history))
         .containsExactly(
-            new ScheduleActivity("OrderActivities.chargeCard", new Payload("[\"order-42\",4200]")));
+            new ScheduleActivity(
+                "OrderActivities.chargeCard",
+                new Payload("[\"order-42\",4200]"),
+                ActivityOptions.DEFAULT));
   }
 
   @Test
@@ -42,7 +49,10 @@ class WorkflowRuntimeTest {
 
     assertThat(decide(history))
         .containsExactly(
-            new ScheduleActivity("OrderActivities.reserveStock", new Payload("[\"order-42\"]")));
+            new ScheduleActivity(
+                "OrderActivities.reserveStock",
+                new Payload("[\"order-42\"]"),
+                ActivityOptions.DEFAULT));
   }
 
   @Test
@@ -73,7 +83,7 @@ class WorkflowRuntimeTest {
   }
 
   @Test
-  void aFailedActivityFailsTheWorkflow() {
+  void anActivityFailureThatTheWorkflowDoesNotCatchFailsTheWorkflow() {
     History history =
         History.startedWith(ORDER)
             .scheduled("OrderActivities.chargeCard", "order-42", 4200)
@@ -81,7 +91,75 @@ class WorkflowRuntimeTest {
 
     assertThat(decide(history))
         .containsExactly(
-            new FailWorkflow(new Failure("com.example.CardDeclinedException", "card declined")));
+            new FailWorkflow(
+                new Failure(
+                    ActivityFailedException.class.getName(),
+                    "OrderActivities.chargeCard failed after 1 attempt:"
+                        + " com.example.CardDeclinedException: card declined")));
+  }
+
+  @Test
+  void workflowCodeCanCatchAnActivityFailureAndCarryOn() {
+    List<ActivityFailedException> caught = new ArrayList<>();
+    WorkflowDefinition<Order, String> handlesDecline =
+        new WorkflowDefinition<>(
+            "HandlesDecline",
+            Order.class,
+            () ->
+                (ctx, order) -> {
+                  OrderActivities shop = ctx.activities(OrderActivities.class);
+                  try {
+                    return shop.chargeCard(order.id(), order.cents());
+                  } catch (ActivityFailedException e) {
+                    caught.add(e);
+                    shop.sendEmail(order.id());
+                    return "declined";
+                  }
+                });
+    History history =
+        History.startedWith(ORDER)
+            .scheduled("OrderActivities.chargeCard", "order-42", 4200)
+            .failed(2, "com.example.CardDeclinedException", "card declined");
+
+    List<Command> commands = runtime.decide(handlesDecline, "order-42", history.entries());
+
+    assertThat(commands)
+        .containsExactly(
+            new ScheduleActivity(
+                "OrderActivities.sendEmail",
+                new Payload("[\"order-42\"]"),
+                ActivityOptions.DEFAULT));
+    assertThat(caught)
+        .singleElement()
+        .satisfies(
+            e -> {
+              assertThat(e.activity()).isEqualTo("OrderActivities.chargeCard");
+              assertThat(e.failureType()).isEqualTo("com.example.CardDeclinedException");
+              assertThat(e.failureMessage()).isEqualTo("card declined");
+              assertThat(e.attempts()).isEqualTo(1);
+            });
+  }
+
+  @Test
+  void theOptionsGivenToAnActivityTravelWithItsCommand() {
+    ActivityOptions quick =
+        ActivityOptions.builder()
+            .attemptTimeout(Duration.ofSeconds(5))
+            .retryPolicy(RetryPolicy.builder().maxAttempts(2).build())
+            .build();
+    WorkflowDefinition<Order, String> withOptions =
+        new WorkflowDefinition<>(
+            "WithOptions",
+            Order.class,
+            () ->
+                (ctx, order) ->
+                    ctx.activities(OrderActivities.class, quick)
+                        .chargeCard(order.id(), order.cents()));
+
+    assertThat(runtime.decide(withOptions, "order-42", History.startedWith(ORDER).entries()))
+        .containsExactly(
+            new ScheduleActivity(
+                "OrderActivities.chargeCard", new Payload("[\"order-42\",4200]"), quick));
   }
 
   @Test

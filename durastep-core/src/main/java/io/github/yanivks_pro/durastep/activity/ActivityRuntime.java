@@ -3,12 +3,18 @@ package io.github.yanivks_pro.durastep.activity;
 import io.github.yanivks_pro.durastep.activity.ActivityRegistry.RegisteredActivity;
 import io.github.yanivks_pro.durastep.activity.ActivityResult.Completed;
 import io.github.yanivks_pro.durastep.activity.ActivityResult.Failed;
+import io.github.yanivks_pro.durastep.api.ActivityOptions;
+import io.github.yanivks_pro.durastep.api.ActivityTimeoutException;
 import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.Failure;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public final class ActivityRuntime {
 
@@ -21,24 +27,61 @@ public final class ActivityRuntime {
   }
 
   public ActivityResult execute(
-      String activity, Payload arguments, String workflowId, int scheduledSeq) {
+      String activity,
+      Payload arguments,
+      String workflowId,
+      int scheduledSeq,
+      ActivityOptions options)
+      throws InterruptedException {
     Optional<RegisteredActivity> registered = registry.find(activity);
     if (registered.isEmpty()) {
       return new Failed(
           new Failure(
               IllegalStateException.class.getName(),
-              "no implementation is registered for activity " + activity));
+              "no implementation is registered for activity " + activity),
+          false);
     }
     Method method = registered.get().method();
+    Object[] values;
     try {
-      Object[] values = converter.fromArguments(arguments, method.getGenericParameterTypes());
-      Object result =
-          ActivityScope.callWith(
-              new RunningActivity(workflowId, scheduledSeq),
-              () -> invoke(registered.get().implementation(), method, values));
+      values = converter.fromArguments(arguments, method.getGenericParameterTypes());
+    } catch (RuntimeException e) {
+      return new Failed(Failure.of(e), false);
+    }
+
+    CompletableFuture<Object> outcome = new CompletableFuture<>();
+    RunningActivity context = new RunningActivity(workflowId, scheduledSeq);
+    Thread attempt =
+        Thread.ofVirtual()
+            .name("durastep-activity-" + context.idempotencyKey())
+            .start(
+                () -> {
+                  try {
+                    outcome.complete(
+                        ActivityScope.callWith(
+                            context,
+                            () -> invoke(registered.get().implementation(), method, values)));
+                  } catch (Throwable e) {
+                    outcome.completeExceptionally(e);
+                  }
+                });
+    try {
+      Object result = outcome.get(options.attemptTimeout().toNanos(), TimeUnit.NANOSECONDS);
       return new Completed(converter.toPayload(result));
-    } catch (Exception e) {
-      return new Failed(Failure.of(e));
+    } catch (TimeoutException e) {
+      attempt.interrupt();
+      ActivityTimeoutException timeout =
+          new ActivityTimeoutException(activity, options.attemptTimeout());
+      return new Failed(Failure.of(timeout), options.retryPolicy().isRetryable(timeout));
+    } catch (InterruptedException e) {
+      attempt.interrupt();
+      throw e;
+    } catch (ExecutionException e) {
+      Throwable cause = e.getCause();
+      if (cause instanceof Error error) {
+        throw error;
+      }
+      return new Failed(Failure.of(cause), options.retryPolicy().isRetryable(cause));
     }
   }
 

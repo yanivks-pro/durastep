@@ -6,6 +6,23 @@ All notable changes to Durastep are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Activity retries: `ctx.activities(Interface.class, ActivityOptions)` with a `RetryPolicy` (attempts,
+  backoff that doubles up to a cap with jitter, non-retryable errors), a limit per attempt and an optional
+  limit for all attempts together. Retries are delayed tasks that survive crashes and reuse the same
+  idempotency key.
+- `ActivityFailedException` in workflow code when an activity fails for good; workflows may catch it.
+- `ActivityTimeoutException` for attempts that run longer than their limit.
+
+### Changed
+
+- A failing activity is now retried under its policy (default: 5 attempts, 1 second doubling up to 1 minute)
+  instead of failing the workflow at once. A workflow fails only if it does not catch the final
+  `ActivityFailedException`, and its failure then names the activity and the number of attempts.
+- While an activity runs, its lease is extended to its attempt limit plus one lease, so a slow attempt is not
+  taken over by another worker. A crashed activity is therefore resumed after that time.
+
 ## [0.1.0] - 2026-11-15
 
 ### Added

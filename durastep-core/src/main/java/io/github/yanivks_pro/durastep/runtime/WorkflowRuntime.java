@@ -43,9 +43,6 @@ public final class WorkflowRuntime {
     if (ctx.nonDeterminism() != null) {
       throw ctx.nonDeterminism();
     }
-    if (ctx.activityFailure() != null) {
-      return List.of(new FailWorkflow(ctx.activityFailure()));
-    }
     if (ctx.suspended()) {
       if (!ctx.isSuspension(thrown.get())) {
         return List.of(

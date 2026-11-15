@@ -5,8 +5,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Timeouts and retries for the activities of a workflow, given when obtaining them from {@link
- * WorkflowContext#activities}.
+ * Timeouts and retries for the activities obtained with {@link WorkflowContext#activities(Class,
+ * ActivityOptions)}.
  *
  * <pre>{@code
  * ActivityOptions.builder()
