@@ -1,5 +1,7 @@
 package io.github.yanivks_pro.durastep.store;
 
+import io.github.yanivks_pro.durastep.api.ActivityOptions;
+import io.github.yanivks_pro.durastep.api.RetryPolicy;
 import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.runtime.Failure;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent;
@@ -9,8 +11,12 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 final class EventCodec {
@@ -42,6 +48,7 @@ final class EventCodec {
           object()
               .put("activity", scheduled.activity())
               .set("arguments", tree(scheduled.arguments()))
+              .set("options", optionsTree(scheduled.options()))
               .toString();
       case ActivityCompleted completed ->
           object()
@@ -51,6 +58,7 @@ final class EventCodec {
       case ActivityFailed failed ->
           object()
               .put("scheduledSeq", failed.scheduledSeq())
+              .put("attempts", failed.attempts())
               .set("failure", failureTree(failed.failure()))
               .toString();
       case WorkflowCompleted completed -> completed.result().json();
@@ -64,7 +72,9 @@ final class EventCodec {
       case ACTIVITY_SCHEDULED -> {
         JsonNode node = mapper.readTree(payloadJson);
         yield new ActivityScheduled(
-            node.required("activity").asString(), payload(node.required("arguments")));
+            node.required("activity").asString(),
+            payload(node.required("arguments")),
+            node.has("options") ? options(node.get("options")) : ActivityOptions.DEFAULT);
       }
       case ACTIVITY_COMPLETED -> {
         JsonNode node = mapper.readTree(payloadJson);
@@ -74,7 +84,9 @@ final class EventCodec {
       case ACTIVITY_FAILED -> {
         JsonNode node = mapper.readTree(payloadJson);
         yield new ActivityFailed(
-            node.required("scheduledSeq").asInt(), failure(node.required("failure")));
+            node.required("scheduledSeq").asInt(),
+            failure(node.required("failure")),
+            node.has("attempts") ? node.get("attempts").asInt() : 1);
       }
       case WORKFLOW_COMPLETED -> new WorkflowCompleted(new Payload(payloadJson));
       case WORKFLOW_FAILED -> new WorkflowFailed(failure(mapper.readTree(payloadJson)));
@@ -88,6 +100,41 @@ final class EventCodec {
 
   Failure failure(String json) {
     return failure(mapper.readTree(json));
+  }
+
+  private ObjectNode optionsTree(ActivityOptions options) {
+    RetryPolicy retry = options.retryPolicy();
+    ObjectNode node = object().put("attemptTimeout", options.attemptTimeout().toString());
+    options.totalTimeout().ifPresent(total -> node.put("totalTimeout", total.toString()));
+    ArrayNode nonRetryable = mapper.createArrayNode();
+    retry.nonRetryableTypes().forEach(nonRetryable::add);
+    node.set(
+        "retry",
+        object()
+            .put("maxAttempts", retry.maxAttempts())
+            .put("initialBackoff", retry.initialBackoff().toString())
+            .put("maxBackoff", retry.maxBackoff().toString())
+            .set("nonRetryable", nonRetryable));
+    return node;
+  }
+
+  private static ActivityOptions options(JsonNode node) {
+    JsonNode retry = node.required("retry");
+    List<String> nonRetryable = new ArrayList<>();
+    retry.required("nonRetryable").forEach(type -> nonRetryable.add(type.asString()));
+    ActivityOptions.Builder builder =
+        ActivityOptions.builder()
+            .attemptTimeout(Duration.parse(node.required("attemptTimeout").asString()))
+            .retryPolicy(
+                new RetryPolicy(
+                    retry.required("maxAttempts").asInt(),
+                    Duration.parse(retry.required("initialBackoff").asString()),
+                    Duration.parse(retry.required("maxBackoff").asString()),
+                    nonRetryable));
+    if (node.has("totalTimeout")) {
+      builder.totalTimeout(Duration.parse(node.get("totalTimeout").asString()));
+    }
+    return builder.build();
   }
 
   private ObjectNode object() {

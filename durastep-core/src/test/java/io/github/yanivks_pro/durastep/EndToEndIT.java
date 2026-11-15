@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.yanivks_pro.durastep.api.ActivityContext;
+import io.github.yanivks_pro.durastep.api.ActivityFailedException;
+import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.DurastepClient;
 import io.github.yanivks_pro.durastep.api.DurastepEngine;
+import io.github.yanivks_pro.durastep.api.RetryPolicy;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.api.WorkflowFailedException;
@@ -32,6 +35,16 @@ class EndToEndIT {
 
   private static final Duration WAIT = Duration.ofSeconds(10);
 
+  private static final ActivityOptions QUICK_RETRIES =
+      ActivityOptions.builder()
+          .retryPolicy(
+              RetryPolicy.builder()
+                  .maxAttempts(2)
+                  .initialBackoff(Duration.ofMillis(10))
+                  .maxBackoff(Duration.ofMillis(20))
+                  .build())
+          .build();
+
   record Order(String id, long cents) {}
 
   record Receipt(String chargeId, Instant confirmedAt) {}
@@ -47,7 +60,7 @@ class EndToEndIT {
   static final class OrderWorkflow implements Workflow<Order, Receipt> {
     @Override
     public Receipt run(WorkflowContext ctx, Order order) {
-      OrderActivities activities = ctx.activities(OrderActivities.class);
+      OrderActivities activities = ctx.activities(OrderActivities.class, QUICK_RETRIES);
       String chargeId = activities.chargeCard(order.id(), order.cents());
       activities.reserveStock(order.id());
       activities.sendEmail(order.id());
@@ -184,10 +197,16 @@ class EndToEndIT {
             WorkflowFailedException.class,
             failed -> {
               assertThat(failed.workflowId()).isEqualTo("order-42");
-              assertThat(failed.failureType()).isEqualTo(IllegalStateException.class.getName());
-              assertThat(failed.getMessage()).contains("out of stock");
+              assertThat(failed.failureType()).isEqualTo(ActivityFailedException.class.getName());
+              assertThat(failed.getMessage())
+                  .contains("reserveStock failed after 2 attempts")
+                  .contains("out of stock");
             });
-    assertThat(shop.calls).noneMatch(call -> call.startsWith("sendEmail"));
+    assertThat(shop.calls)
+        .containsExactly(
+            "chargeCard order-42/activity-2",
+            "reserveStock order-42/activity-4",
+            "reserveStock order-42/activity-4");
   }
 
   @Test

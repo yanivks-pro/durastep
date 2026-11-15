@@ -9,6 +9,7 @@ import io.github.yanivks_pro.durastep.TestPostgres;
 import io.github.yanivks_pro.durastep.activity.ActivityRegistry;
 import io.github.yanivks_pro.durastep.activity.ActivityRuntime;
 import io.github.yanivks_pro.durastep.api.ActivityContext;
+import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
@@ -56,7 +57,10 @@ class CrashPointIT {
   static final class OrderWorkflow implements Workflow<Order, String> {
     @Override
     public String run(WorkflowContext ctx, Order order) {
-      OrderActivities activities = ctx.activities(OrderActivities.class);
+      OrderActivities activities =
+          ctx.activities(
+              OrderActivities.class,
+              ActivityOptions.builder().attemptTimeout(Duration.ofSeconds(2)).build());
       String chargeId = activities.chargeCard(order.id(), order.cents());
       activities.reserveStock(order.id());
       return chargeId;

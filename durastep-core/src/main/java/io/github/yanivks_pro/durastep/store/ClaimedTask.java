@@ -5,5 +5,6 @@ public record ClaimedTask(
     String workflowId,
     TaskKind kind,
     Integer activitySeq,
+    int attempt,
     long fencingToken,
     String owner) {}

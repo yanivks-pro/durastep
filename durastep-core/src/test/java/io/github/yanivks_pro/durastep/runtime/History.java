@@ -1,5 +1,6 @@
 package io.github.yanivks_pro.durastep.runtime;
 
+import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.payload.JsonPayloadConverter;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
@@ -27,7 +28,9 @@ final class History {
   }
 
   History scheduled(String activity, Object... arguments) {
-    return append(next(), new ActivityScheduled(activity, JSON.toArguments(arguments)));
+    return append(
+        next(),
+        new ActivityScheduled(activity, JSON.toArguments(arguments), ActivityOptions.DEFAULT));
   }
 
   History completed(int scheduledSeq, Object result) {
@@ -35,7 +38,7 @@ final class History {
   }
 
   History failed(int scheduledSeq, String errorType, String message) {
-    return append(next(), new ActivityFailed(scheduledSeq, new Failure(errorType, message)));
+    return append(next(), new ActivityFailed(scheduledSeq, new Failure(errorType, message), 1));
   }
 
   History append(Instant at, HistoryEvent event) {

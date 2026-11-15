@@ -13,9 +13,10 @@ import java.util.UUID;
 public interface WorkflowContext {
 
   /**
-   * Returns a stub for an activity interface. Calling a method on the stub runs the activity
-   * durably: it executes once its turn comes, and on replay the stub returns the saved result
-   * without executing it again.
+   * Returns a stub for an activity interface, using {@link ActivityOptions#DEFAULT}. Calling a
+   * method on the stub runs the activity durably: it executes once its turn comes, and on replay
+   * the stub returns the saved result without executing it again. When an activity fails for good,
+   * the call throws {@link ActivityFailedException}.
    *
    * @param activityInterface the interface that declares the activities
    * @param <T> the interface type
@@ -23,6 +24,18 @@ public interface WorkflowContext {
    * @throws IllegalArgumentException if {@code activityInterface} is not an interface
    */
   <T> T activities(Class<T> activityInterface);
+
+  /**
+   * Returns a stub for an activity interface whose activities use the given timeouts and retries.
+   * When an activity fails for good, the call throws {@link ActivityFailedException}.
+   *
+   * @param activityInterface the interface that declares the activities
+   * @param options the timeouts and retry policy for these activities
+   * @param <T> the interface type
+   * @return a stub implementing {@code activityInterface}
+   * @throws IllegalArgumentException if {@code activityInterface} is not an interface
+   */
+  <T> T activities(Class<T> activityInterface, ActivityOptions options);
 
   /**
    * Returns the workflow's current time: the database time at which the workflow reached its

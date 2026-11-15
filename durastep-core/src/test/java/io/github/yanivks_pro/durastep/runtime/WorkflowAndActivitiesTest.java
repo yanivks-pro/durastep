@@ -8,6 +8,7 @@ import io.github.yanivks_pro.durastep.activity.ActivityResult.Completed;
 import io.github.yanivks_pro.durastep.activity.ActivityResult.Failed;
 import io.github.yanivks_pro.durastep.activity.ActivityRuntime;
 import io.github.yanivks_pro.durastep.api.ActivityContext;
+import io.github.yanivks_pro.durastep.api.ActivityFailedException;
 import io.github.yanivks_pro.durastep.payload.JsonPayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
@@ -35,7 +36,7 @@ class WorkflowAndActivitiesTest {
       WorkflowDefinition.of(OrderWorkflow.class, OrderWorkflow::new);
 
   @Test
-  void aWorkflowRunsItsRealActivitiesToCompletion() {
+  void aWorkflowRunsItsRealActivitiesToCompletion() throws Exception {
     History history = History.startedWith(new Order("order-42", 4200));
 
     Command last = runToTheEnd(history);
@@ -51,7 +52,7 @@ class WorkflowAndActivitiesTest {
   }
 
   @Test
-  void aFailingActivityFailsTheWorkflowWithItsError() {
+  void aFailingActivityFailsTheWorkflowWithItsError() throws Exception {
     implementation.outOfStock = true;
     History history = History.startedWith(new Order("order-42", 4200));
 
@@ -59,25 +60,30 @@ class WorkflowAndActivitiesTest {
 
     assertThat(last)
         .isEqualTo(
-            new FailWorkflow(new Failure(IllegalStateException.class.getName(), "out of stock")));
+            new FailWorkflow(
+                new Failure(
+                    ActivityFailedException.class.getName(),
+                    "OrderActivities.reserveStock failed after 1 attempt:"
+                        + " java.lang.IllegalStateException: out of stock")));
     assertThat(implementation.calls)
         .containsExactly("chargeCard order-42/activity-2", "reserveStock order-42/activity-4");
   }
 
-  private Command runToTheEnd(History history) {
+  private Command runToTheEnd(History history) throws InterruptedException {
     List<Command> commands = workflows.decide(definition, "order-42", history.entries());
     while (commands.getFirst() instanceof ScheduleActivity schedule) {
       int seq = history.entries().size() + 1;
       history.append(
           History.START.plusSeconds(seq),
-          new ActivityScheduled(schedule.activity(), schedule.arguments()));
+          new ActivityScheduled(schedule.activity(), schedule.arguments(), schedule.options()));
       ActivityResult result =
-          activities.execute(schedule.activity(), schedule.arguments(), "order-42", seq);
+          activities.execute(
+              schedule.activity(), schedule.arguments(), "order-42", seq, schedule.options());
       history.append(
           History.START.plusSeconds(seq + 1),
           switch (result) {
             case Completed completed -> new ActivityCompleted(seq, completed.result());
-            case Failed failed -> new ActivityFailed(seq, failed.failure());
+            case Failed failed -> new ActivityFailed(seq, failed.failure(), 1);
           });
       commands = workflows.decide(definition, "order-42", history.entries());
     }

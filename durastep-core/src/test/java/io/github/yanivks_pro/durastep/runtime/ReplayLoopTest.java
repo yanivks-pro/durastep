@@ -30,7 +30,7 @@ class ReplayLoopTest {
     while (commands.getFirst() instanceof ScheduleActivity schedule) {
       history.append(
           History.START.plusSeconds(history.entries().size()),
-          new ActivityScheduled(schedule.activity(), schedule.arguments()));
+          new ActivityScheduled(schedule.activity(), schedule.arguments(), schedule.options()));
       assertThat(decideTwice(history)).isEmpty();
 
       history.completed(history.entries().size(), execute(schedule.activity()));

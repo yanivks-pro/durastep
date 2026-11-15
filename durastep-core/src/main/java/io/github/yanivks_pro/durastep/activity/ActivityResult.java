@@ -7,5 +7,5 @@ public sealed interface ActivityResult {
 
   record Completed(Payload result) implements ActivityResult {}
 
-  record Failed(Failure failure) implements ActivityResult {}
+  record Failed(Failure failure, boolean retryable) implements ActivityResult {}
 }

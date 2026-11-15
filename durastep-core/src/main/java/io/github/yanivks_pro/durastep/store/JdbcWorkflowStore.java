@@ -9,6 +9,7 @@ import io.github.yanivks_pro.durastep.runtime.Command;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
+import io.github.yanivks_pro.durastep.runtime.Failure;
 import io.github.yanivks_pro.durastep.runtime.HistoryEntry;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
@@ -111,7 +112,7 @@ public final class JdbcWorkflowStore {
                       + " WHERE kind = ? AND queue = ? AND visible_at <= now()"
                       + " AND (lease_until IS NULL OR lease_until < now())"
                       + " ORDER BY visible_at, id LIMIT 1 FOR UPDATE SKIP LOCKED)"
-                      + " RETURNING id, workflow_id, activity_seq, fencing_token")) {
+                      + " RETURNING id, workflow_id, activity_seq, attempt, fencing_token")) {
             statement.setString(1, owner);
             statement.setLong(2, lease.toMillis());
             statement.setString(3, kind.name());
@@ -126,6 +127,7 @@ public final class JdbcWorkflowStore {
                       row.getString("workflow_id"),
                       kind,
                       row.getObject("activity_seq", Integer.class),
+                      row.getInt("attempt"),
                       row.getLong("fencing_token"),
                       owner));
             }
@@ -197,7 +199,8 @@ public final class JdbcWorkflowStore {
                     connection,
                     task.workflowId(),
                     seq,
-                    new ActivityScheduled(schedule.activity(), schedule.arguments()),
+                    new ActivityScheduled(
+                        schedule.activity(), schedule.arguments(), schedule.options()),
                     null);
                 update(
                     connection,
@@ -291,9 +294,59 @@ public final class JdbcWorkflowStore {
                   task.workflowId(),
                   task.activitySeq(),
                   scheduled.activity(),
-                  scheduled.arguments());
+                  scheduled.arguments(),
+                  scheduled.options(),
+                  task.attempt());
             }
           }
+        });
+  }
+
+  public void extendLease(ClaimedTask task, Duration lease) {
+    transactions.inTransaction(
+        "extend the lease of task " + task.id(),
+        connection -> {
+          int extended =
+              update(
+                  connection,
+                  "UPDATE "
+                      + tasks
+                      + " SET lease_until = now() + ? * interval '1 millisecond'"
+                      + " WHERE id = ? AND fencing_token = ? AND lease_owner = ?",
+                  lease.toMillis(),
+                  task.id(),
+                  task.fencingToken(),
+                  task.owner());
+          if (extended == 0) {
+            throw new StaleTaskException(task);
+          }
+          return null;
+        });
+  }
+
+  public boolean retryActivity(
+      ClaimedTask task, Failure failure, Duration delay, Optional<Duration> totalTimeout) {
+    return transactions.inTransaction(
+        "schedule a retry of activity " + task.activitySeq() + " of workflow " + task.workflowId(),
+        connection -> {
+          fence(connection, task);
+          if (totalTimeout.isPresent()
+              && retryWouldEndTooLate(connection, task, delay, totalTimeout.get())) {
+            saveFinalOutcome(connection, task, new Failed(failure, false));
+            return false;
+          }
+          update(
+              connection,
+              "UPDATE "
+                  + tasks
+                  + " SET attempt = attempt + 1,"
+                  + " visible_at = now() + ? * interval '1 millisecond',"
+                  + " last_error = CAST(? AS jsonb), lease_owner = NULL, lease_until = NULL"
+                  + " WHERE id = ?",
+              delay.toMillis(),
+              codec.failureJson(failure),
+              task.id());
+          return true;
         });
   }
 
@@ -302,37 +355,61 @@ public final class JdbcWorkflowStore {
         "save the result of activity " + task.activitySeq() + " of workflow " + task.workflowId(),
         connection -> {
           fence(connection, task);
-          update(connection, "DELETE FROM " + tasks + " WHERE id = ?", task.id());
-          if (stateOf(connection, task.workflowId()) != WorkflowState.RUNNING) {
-            return null;
-          }
-          HistoryEvent outcome =
-              switch (result) {
-                case Completed completed ->
-                    new ActivityCompleted(task.activitySeq(), completed.result());
-                case Failed failed -> new ActivityFailed(task.activitySeq(), failed.failure());
-              };
-          update(
-              connection,
-              "INSERT INTO "
-                  + inbox
-                  + " (workflow_id, kind, payload, request_id) VALUES (?, ?, CAST(? AS jsonb), ?)"
-                  + " ON CONFLICT (workflow_id, request_id) DO NOTHING",
-              task.workflowId(),
-              codec.typeOf(outcome),
-              codec.payloadOf(outcome),
-              "activity-" + task.activitySeq());
-          crashPoints.reached(CrashPoint.MID_ACTIVITY_COMPLETE);
-          update(
-              connection,
-              "INSERT INTO "
-                  + tasks
-                  + " (workflow_id, kind) VALUES (?, 'WORKFLOW')"
-                  + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
-                  + " DO UPDATE SET needs_rerun = true",
-              task.workflowId());
+          saveFinalOutcome(connection, task, result);
           return null;
         });
+  }
+
+  private boolean retryWouldEndTooLate(
+      Connection connection, ClaimedTask task, Duration delay, Duration totalTimeout)
+      throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement(
+            "SELECT now() + ? * interval '1 millisecond'"
+                + " > created_at + ? * interval '1 millisecond' FROM "
+                + history
+                + " WHERE workflow_id = ? AND seq = ?")) {
+      statement.setLong(1, delay.toMillis());
+      statement.setLong(2, totalTimeout.toMillis());
+      statement.setString(3, task.workflowId());
+      statement.setInt(4, task.activitySeq());
+      try (ResultSet row = statement.executeQuery()) {
+        return row.next() && row.getBoolean(1);
+      }
+    }
+  }
+
+  private void saveFinalOutcome(Connection connection, ClaimedTask task, ActivityResult result)
+      throws SQLException {
+    update(connection, "DELETE FROM " + tasks + " WHERE id = ?", task.id());
+    if (stateOf(connection, task.workflowId()) != WorkflowState.RUNNING) {
+      return;
+    }
+    HistoryEvent outcome =
+        switch (result) {
+          case Completed completed -> new ActivityCompleted(task.activitySeq(), completed.result());
+          case Failed failed ->
+              new ActivityFailed(task.activitySeq(), failed.failure(), task.attempt());
+        };
+    update(
+        connection,
+        "INSERT INTO "
+            + inbox
+            + " (workflow_id, kind, payload, request_id) VALUES (?, ?, CAST(? AS jsonb), ?)"
+            + " ON CONFLICT (workflow_id, request_id) DO NOTHING",
+        task.workflowId(),
+        codec.typeOf(outcome),
+        codec.payloadOf(outcome),
+        "activity-" + task.activitySeq());
+    crashPoints.reached(CrashPoint.MID_ACTIVITY_COMPLETE);
+    update(
+        connection,
+        "INSERT INTO "
+            + tasks
+            + " (workflow_id, kind) VALUES (?, 'WORKFLOW')"
+            + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
+            + " DO UPDATE SET needs_rerun = true",
+        task.workflowId());
   }
 
   public Optional<StoredWorkflow> find(String workflowId) {
