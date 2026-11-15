@@ -6,6 +6,8 @@ All notable changes to Durastep are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-15
+
 ### Added
 
 - Workflows written as plain Java (`Workflow<I, O>`), with activities declared as interfaces and called
