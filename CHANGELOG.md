@@ -6,6 +6,12 @@ All notable changes to Durastep are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Concurrency: `workflowConcurrency` (default 10) and `activityConcurrency` (default 100) on the engine
+  builder. Each engine claims at most as many tasks as it has free slots, in one batch, and runs each on its
+  own virtual thread.
+
 ## [0.2.0] - 2026-11-15
 
 ### Added

@@ -126,8 +126,16 @@ public final class JdbcWorkflowStore {
   }
 
   public Optional<ClaimedTask> claim(TaskKind kind, String queue, String owner, Duration lease) {
+    return claim(kind, queue, owner, lease, 1).stream().findFirst();
+  }
+
+  public List<ClaimedTask> claim(
+      TaskKind kind, String queue, String owner, Duration lease, int limit) {
+    if (limit < 1) {
+      throw new IllegalArgumentException("limit must be at least 1, was " + limit);
+    }
     return transactions.inTransaction(
-        "claim a " + kind + " task",
+        "claim " + kind + " tasks",
         connection -> {
           try (PreparedStatement statement =
               connection.prepareStatement(
@@ -136,30 +144,32 @@ public final class JdbcWorkflowStore {
                       + " SET lease_owner = ?,"
                       + " lease_until = now() + ? * interval '1 millisecond',"
                       + " fencing_token = fencing_token + 1"
-                      + " WHERE id = (SELECT id FROM "
+                      + " WHERE id IN (SELECT id FROM "
                       + tasks
                       + " WHERE kind = ? AND queue = ? AND visible_at <= now()"
                       + " AND (lease_until IS NULL OR lease_until < now())"
-                      + " ORDER BY visible_at, id LIMIT 1 FOR UPDATE SKIP LOCKED)"
+                      + " ORDER BY visible_at, id LIMIT ? FOR UPDATE SKIP LOCKED)"
                       + " RETURNING id, workflow_id, activity_seq, attempt, fencing_token")) {
             statement.setString(1, owner);
             statement.setLong(2, lease.toMillis());
             statement.setString(3, kind.name());
             statement.setString(4, queue);
+            statement.setInt(5, limit);
+            List<ClaimedTask> claimed = new ArrayList<>();
             try (ResultSet row = statement.executeQuery()) {
-              if (!row.next()) {
-                return Optional.empty();
+              while (row.next()) {
+                claimed.add(
+                    new ClaimedTask(
+                        row.getLong("id"),
+                        row.getString("workflow_id"),
+                        kind,
+                        row.getObject("activity_seq", Integer.class),
+                        row.getInt("attempt"),
+                        row.getLong("fencing_token"),
+                        owner));
               }
-              return Optional.of(
-                  new ClaimedTask(
-                      row.getLong("id"),
-                      row.getString("workflow_id"),
-                      kind,
-                      row.getObject("activity_seq", Integer.class),
-                      row.getInt("attempt"),
-                      row.getLong("fencing_token"),
-                      owner));
             }
+            return claimed;
           }
         });
   }

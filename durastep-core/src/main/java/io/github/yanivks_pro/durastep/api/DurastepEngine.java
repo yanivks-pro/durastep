@@ -58,9 +58,12 @@ public final class DurastepEngine implements AutoCloseable {
             builder.workflows,
             new WorkflowRuntime(converter),
             new ActivityRuntime(builder.activities, converter),
-            newOwnerName(),
-            builder.leaseDuration,
-            POLL_INTERVAL,
+            new Worker.Settings(
+                newOwnerName(),
+                builder.leaseDuration,
+                POLL_INTERVAL,
+                builder.workflowConcurrency,
+                builder.activityConcurrency),
             CrashPoints.NONE);
     this.client = new StoreBackedClient(store, converter, POLL_INTERVAL);
   }
@@ -137,6 +140,8 @@ public final class DurastepEngine implements AutoCloseable {
     private String schema = JdbcWorkflowStore.DEFAULT_SCHEMA;
     private boolean applyMigrations = true;
     private Duration leaseDuration = Duration.ofSeconds(30);
+    private int workflowConcurrency = 10;
+    private int activityConcurrency = 100;
     private final WorkflowRegistry workflows = new WorkflowRegistry();
     private final ActivityRegistry activities = new ActivityRegistry();
 
@@ -224,6 +229,40 @@ public final class DurastepEngine implements AutoCloseable {
       }
       this.leaseDuration = leaseDuration;
       return this;
+    }
+
+    /**
+     * Sets how many workflow decisions this engine makes at the same time. Defaults to 10. A
+     * workflow's decisions never run in parallel with each other, whatever this value.
+     *
+     * @param workflowConcurrency at least 1
+     * @return this builder
+     * @throws IllegalArgumentException if {@code workflowConcurrency} is below 1
+     */
+    public Builder workflowConcurrency(int workflowConcurrency) {
+      this.workflowConcurrency = requireAtLeastOne(workflowConcurrency, "workflowConcurrency");
+      return this;
+    }
+
+    /**
+     * Sets how many activities this engine runs at the same time, each on its own virtual thread.
+     * Defaults to 100. The engine never claims more work than it has free slots, so the rest is
+     * left for other engines.
+     *
+     * @param activityConcurrency at least 1
+     * @return this builder
+     * @throws IllegalArgumentException if {@code activityConcurrency} is below 1
+     */
+    public Builder activityConcurrency(int activityConcurrency) {
+      this.activityConcurrency = requireAtLeastOne(activityConcurrency, "activityConcurrency");
+      return this;
+    }
+
+    private static int requireAtLeastOne(int value, String name) {
+      if (value < 1) {
+        throw new IllegalArgumentException(name + " must be at least 1, was " + value);
+      }
+      return value;
     }
 
     /**
