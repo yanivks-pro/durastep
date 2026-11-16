@@ -87,6 +87,15 @@ public interface WorkflowContext {
   void setStatus(String status);
 
   /**
+   * Returns a new saga for undoing completed steps when a later one fails.
+   *
+   * @return an empty saga
+   */
+  default Saga saga() {
+    return new Saga();
+  }
+
+  /**
    * Returns the workflow's current time: the database time at which the workflow reached its
    * current step. It is the same on every replay.
    *
