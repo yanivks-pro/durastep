@@ -25,3 +25,4 @@ for the rules, and [the template](0000-template.md) for the format.
 | [0018](0018-leases-fencing-and-heartbeats.md) | Leases, fencing tokens and heartbeats | Accepted |
 | [0019](0019-one-decider-per-workflow.md) | One decider per workflow | Accepted |
 | [0020](0020-published-status-instead-of-queries.md) | Signals in, published status out | Accepted |
+| [0021](0021-cooperative-cancellation.md) | Cooperative cancellation | Accepted |

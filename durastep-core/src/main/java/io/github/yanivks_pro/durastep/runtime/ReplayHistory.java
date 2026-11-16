@@ -3,9 +3,11 @@ package io.github.yanivks_pro.durastep.runtime;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.CancelRequested;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCancelled;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
@@ -20,6 +22,7 @@ record ReplayHistory(
     Instant startedAt,
     List<Step> steps,
     List<HistoryEntry> signals,
+    HistoryEntry cancelRequest,
     boolean deadlinePassed) {
 
   static final String SLEEP = "sleep";
@@ -44,6 +47,7 @@ record ReplayHistory(
     List<HistoryEntry> stepsInOrder = new ArrayList<>();
     boolean deadlinePassed = false;
     List<HistoryEntry> signals = new ArrayList<>();
+    HistoryEntry cancelRequest = null;
     for (int i = 0; i < history.size(); i++) {
       HistoryEntry entry = history.get(i);
       boolean first = i == 0;
@@ -77,6 +81,13 @@ record ReplayHistory(
         case TimerFired fired ->
             recordOutcome(entry, fired.startedSeq(), TimerStarted.class, stepsBySeq, outcomeBySeq);
         case SignalReceived ignored -> signals.add(entry);
+        case CancelRequested ignored -> {
+          if (cancelRequest == null) {
+            cancelRequest = entry;
+          }
+        }
+        case WorkflowCancelled ignored ->
+            throw new IllegalStateException("the workflow has already been cancelled");
         case WorkflowCompleted ignored ->
             throw new IllegalStateException("the workflow has already completed");
         case WorkflowFailed ignored ->
@@ -86,7 +97,12 @@ record ReplayHistory(
     List<Step> steps =
         stepsInOrder.stream().map(step -> new Step(step, outcomeBySeq.get(step.seq()))).toList();
     return new ReplayHistory(
-        started, history.getFirst().recordedAt(), steps, List.copyOf(signals), deadlinePassed);
+        started,
+        history.getFirst().recordedAt(),
+        steps,
+        List.copyOf(signals),
+        cancelRequest,
+        deadlinePassed);
   }
 
   static String nameOf(HistoryEntry step) {

@@ -11,9 +11,11 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.CancelRequested;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCancelled;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
@@ -40,6 +42,8 @@ class EventCodecTest {
         new ActivityFailed(2, failure, 3),
         new TimerStarted(Duration.ofDays(3)),
         new TimerFired(4),
+        new CancelRequested(),
+        new WorkflowCancelled(),
         new TimerStarted(Duration.ofDays(3), "approval"),
         new SignalReceived("approval", new Payload("{\"by\":\"ana\"}")),
         new WorkflowCompleted(new Payload("{\"chargeId\":\"ch_9f2\"}")),

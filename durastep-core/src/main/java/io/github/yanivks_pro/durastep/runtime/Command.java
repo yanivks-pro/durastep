@@ -21,4 +21,6 @@ public sealed interface Command {
   record CompleteWorkflow(Payload result) implements Command {}
 
   record FailWorkflow(Failure failure) implements Command {}
+
+  record CancelWorkflow() implements Command {}
 }

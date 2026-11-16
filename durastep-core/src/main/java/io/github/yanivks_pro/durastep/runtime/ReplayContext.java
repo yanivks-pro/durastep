@@ -2,6 +2,7 @@ package io.github.yanivks_pro.durastep.runtime;
 
 import io.github.yanivks_pro.durastep.api.ActivityFailedException;
 import io.github.yanivks_pro.durastep.api.ActivityOptions;
+import io.github.yanivks_pro.durastep.api.CancelledException;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
@@ -42,6 +43,7 @@ final class ReplayContext implements WorkflowContext {
   private final Set<Integer> consumedSignals = new HashSet<>();
   private String status;
   private boolean statusSet;
+  private boolean cancellationDelivered;
   private NonDeterminismException nonDeterminism;
 
   ReplayContext(String workflowId, ReplayHistory history, PayloadConverter converter) {
@@ -91,6 +93,10 @@ final class ReplayContext implements WorkflowContext {
     long mostSignificant = (random.nextLong() & ~0xF000L) | 0x4000L;
     long leastSignificant = (random.nextLong() & 0x3FFFFFFFFFFFFFFFL) | 0x8000000000000000L;
     return new UUID(mostSignificant, leastSignificant);
+  }
+
+  boolean cancellationDelivered() {
+    return cancellationDelivered;
   }
 
   boolean suspended() {
@@ -154,6 +160,9 @@ final class ReplayContext implements WorkflowContext {
       throw suspension;
     }
     Optional<HistoryEntry> signal = nextSignal(name, Integer.MAX_VALUE);
+    if (cancellationDue(signal.map(HistoryEntry::seq).orElse(Integer.MAX_VALUE))) {
+      throw deliverCancellation();
+    }
     if (signal.isEmpty()) {
       throw suspend();
     }
@@ -171,21 +180,29 @@ final class ReplayContext implements WorkflowContext {
       throw suspension;
     }
     String stepName = "awaitSignal(" + name + ")";
-    int stepIndex = nextStep++;
+    int stepIndex = nextStep;
     if (stepIndex >= history.steps().size()) {
-      newCommands.add(new StartTimer(timeout, name));
       Optional<HistoryEntry> buffered = nextSignal(name, Integer.MAX_VALUE);
+      if (cancellationDue(buffered.map(HistoryEntry::seq).orElse(Integer.MAX_VALUE))) {
+        throw deliverCancellation();
+      }
+      nextStep++;
+      newCommands.add(new StartTimer(timeout, name));
       if (buffered.isEmpty()) {
         throw suspend();
       }
       return Optional.of(receive(buffered.get(), type));
     }
     ReplayHistory.Step step = history.steps().get(stepIndex);
+    nextStep++;
     if (!step.name().equals(stepName)) {
       throw mismatch(stepName, stepIndex, step);
     }
     int firedAt = step.hasOutcome() ? step.outcome().seq() : Integer.MAX_VALUE;
     Optional<HistoryEntry> signal = nextSignal(name, firedAt);
+    if (cancellationDue(signal.map(HistoryEntry::seq).orElse(firedAt))) {
+      throw deliverCancellation();
+    }
     if (signal.isPresent()) {
       return Optional.of(receive(signal.get(), type));
     }
@@ -224,6 +241,18 @@ final class ReplayContext implements WorkflowContext {
     return type.cast(converter.fromPayload(((SignalReceived) signal.event()).payload(), type));
   }
 
+  private boolean cancellationDue(int resultSeq) {
+    return history.cancelRequest() != null
+        && !cancellationDelivered
+        && resultSeq > history.cancelRequest().seq();
+  }
+
+  private CancelledException deliverCancellation() {
+    cancellationDelivered = true;
+    advanceTo(history.cancelRequest());
+    return new CancelledException(workflowId);
+  }
+
   private void advanceTo(HistoryEntry entry) {
     if (entry.recordedAt().isAfter(now)) {
       now = entry.recordedAt();
@@ -249,14 +278,22 @@ final class ReplayContext implements WorkflowContext {
     if (suspended) {
       throw suspension;
     }
-    int stepIndex = nextStep++;
+    int stepIndex = nextStep;
     if (stepIndex >= history.steps().size()) {
+      if (cancellationDue(Integer.MAX_VALUE)) {
+        throw deliverCancellation();
+      }
+      nextStep++;
       newCommands.add(newStep.get());
       throw suspend();
     }
     ReplayHistory.Step step = history.steps().get(stepIndex);
+    nextStep++;
     if (!step.name().equals(name)) {
       throw mismatch(name, stepIndex, step);
+    }
+    if (cancellationDue(step.hasOutcome() ? step.outcome().seq() : Integer.MAX_VALUE)) {
+      throw deliverCancellation();
     }
     if (!step.hasOutcome()) {
       throw suspend();

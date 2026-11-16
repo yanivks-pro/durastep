@@ -71,7 +71,7 @@ public final class InvariantChecker {
         "SELECT w.id FROM durastep.workflows w WHERE w.state <> 'RUNNING' AND NOT EXISTS"
             + " (SELECT 1 FROM durastep.history_events h WHERE h.workflow_id = w.id"
             + " AND h.seq = w.history_length"
-            + " AND h.event_type IN ('WORKFLOW_COMPLETED', 'WORKFLOW_FAILED'))");
+            + " AND h.event_type IN ('WORKFLOW_COMPLETED', 'WORKFLOW_FAILED', 'WORKFLOW_CANCELLED'))");
   }
 
   private InvariantChecker() {}

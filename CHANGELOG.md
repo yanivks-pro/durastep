@@ -13,6 +13,9 @@ All notable changes to Durastep are recorded here. The format follows
   workflow waits, and each one is received exactly once.
 - Published status: `ctx.setStatus(text)` and `handle.describe()`, which returns a workflow's state, status and
   whether it is blocked.
+- Cooperative cancellation: `client.cancel(id)`. The workflow receives a `CancelledException` at its next wait
+  point, can clean up with ordinary activities, and ends CANCELLED; `result()` throws
+  `WorkflowCancelledException`. Running activities are not interrupted, but their results are ignored.
 
 ## [0.3.0] - 2026-11-16
 

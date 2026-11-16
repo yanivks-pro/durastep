@@ -26,7 +26,11 @@ public sealed interface HistoryEvent {
 
   record SignalReceived(String name, Payload payload) implements HistoryEvent {}
 
+  record CancelRequested() implements HistoryEvent {}
+
   record WorkflowCompleted(Payload result) implements HistoryEvent {}
+
+  record WorkflowCancelled() implements HistoryEvent {}
 
   record WorkflowFailed(Failure failure) implements HistoryEvent {}
 }
