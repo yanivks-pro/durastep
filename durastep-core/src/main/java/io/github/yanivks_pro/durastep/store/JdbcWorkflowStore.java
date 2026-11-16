@@ -9,12 +9,15 @@ import io.github.yanivks_pro.durastep.runtime.Command;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
+import io.github.yanivks_pro.durastep.runtime.Command.StartTimer;
 import io.github.yanivks_pro.durastep.runtime.Failure;
 import io.github.yanivks_pro.durastep.runtime.HistoryEntry;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
@@ -46,6 +49,7 @@ public final class JdbcWorkflowStore {
   private final String history;
   private final String tasks;
   private final String inbox;
+  private final String timers;
 
   public JdbcWorkflowStore(DataSource dataSource) {
     this(dataSource, DEFAULT_SCHEMA);
@@ -66,6 +70,7 @@ public final class JdbcWorkflowStore {
     this.history = schema + ".history_events";
     this.tasks = schema + ".tasks";
     this.inbox = schema + ".inbox";
+    this.timers = schema + ".timers";
   }
 
   public StartResult start(String workflowId, String type, Payload input) {
@@ -210,6 +215,19 @@ public final class JdbcWorkflowStore {
                     task.workflowId(),
                     seq);
               }
+              case StartTimer timer -> {
+                appendEvent(
+                    connection, task.workflowId(), seq, new TimerStarted(timer.duration()), null);
+                update(
+                    connection,
+                    "INSERT INTO "
+                        + timers
+                        + " (workflow_id, seq, fire_at)"
+                        + " VALUES (?, ?, now() + ? * interval '1 millisecond')",
+                    task.workflowId(),
+                    seq,
+                    timer.duration().toMillis());
+              }
               case CompleteWorkflow complete -> {
                 appendEvent(
                     connection,
@@ -253,6 +271,8 @@ public final class JdbcWorkflowStore {
                 connection, "DELETE FROM " + tasks + " WHERE workflow_id = ?", task.workflowId());
             update(
                 connection, "DELETE FROM " + inbox + " WHERE workflow_id = ?", task.workflowId());
+            update(
+                connection, "DELETE FROM " + timers + " WHERE workflow_id = ?", task.workflowId());
           } else if (rerun) {
             update(
                 connection,
@@ -410,6 +430,52 @@ public final class JdbcWorkflowStore {
             + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
             + " DO UPDATE SET needs_rerun = true",
         task.workflowId());
+  }
+
+  public int fireDueTimers(int limit) {
+    return transactions.inTransaction(
+        "fire due timers",
+        connection -> {
+          List<String> workflowIds = new ArrayList<>();
+          List<TimerFired> fired = new ArrayList<>();
+          try (PreparedStatement statement =
+              connection.prepareStatement(
+                  "DELETE FROM "
+                      + timers
+                      + " WHERE id IN (SELECT id FROM "
+                      + timers
+                      + " WHERE fire_at <= now() ORDER BY fire_at LIMIT ? FOR UPDATE SKIP LOCKED)"
+                      + " RETURNING workflow_id, seq")) {
+            statement.setInt(1, limit);
+            try (ResultSet row = statement.executeQuery()) {
+              while (row.next()) {
+                workflowIds.add(row.getString(1));
+                fired.add(new TimerFired(row.getInt(2)));
+              }
+            }
+          }
+          for (int i = 0; i < fired.size(); i++) {
+            update(
+                connection,
+                "INSERT INTO "
+                    + inbox
+                    + " (workflow_id, kind, payload, request_id) VALUES (?, ?, CAST(? AS jsonb), ?)"
+                    + " ON CONFLICT (workflow_id, request_id) DO NOTHING",
+                workflowIds.get(i),
+                codec.typeOf(fired.get(i)),
+                codec.payloadOf(fired.get(i)),
+                "timer-" + fired.get(i).startedSeq());
+            update(
+                connection,
+                "INSERT INTO "
+                    + tasks
+                    + " (workflow_id, kind) VALUES (?, 'WORKFLOW')"
+                    + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
+                    + " DO UPDATE SET needs_rerun = true",
+                workflowIds.get(i));
+          }
+          return fired.size();
+        });
   }
 
   public Optional<StoredWorkflow> find(String workflowId) {

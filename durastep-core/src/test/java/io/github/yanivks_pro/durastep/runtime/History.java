@@ -6,7 +6,10 @@ import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +42,14 @@ final class History {
 
   History failed(int scheduledSeq, String errorType, String message) {
     return append(next(), new ActivityFailed(scheduledSeq, new Failure(errorType, message), 1));
+  }
+
+  History timerStarted(Duration duration) {
+    return append(next(), new TimerStarted(duration));
+  }
+
+  History timerFired(int startedSeq) {
+    return append(next(), new TimerFired(startedSeq));
   }
 
   History append(Instant at, HistoryEvent event) {

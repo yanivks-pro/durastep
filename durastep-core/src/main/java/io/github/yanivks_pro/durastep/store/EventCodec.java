@@ -8,6 +8,8 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
@@ -25,6 +27,8 @@ final class EventCodec {
   static final String ACTIVITY_SCHEDULED = "ACTIVITY_SCHEDULED";
   static final String ACTIVITY_COMPLETED = "ACTIVITY_COMPLETED";
   static final String ACTIVITY_FAILED = "ACTIVITY_FAILED";
+  static final String TIMER_STARTED = "TIMER_STARTED";
+  static final String TIMER_FIRED = "TIMER_FIRED";
   static final String WORKFLOW_COMPLETED = "WORKFLOW_COMPLETED";
   static final String WORKFLOW_FAILED = "WORKFLOW_FAILED";
 
@@ -36,6 +40,8 @@ final class EventCodec {
       case ActivityScheduled ignored -> ACTIVITY_SCHEDULED;
       case ActivityCompleted ignored -> ACTIVITY_COMPLETED;
       case ActivityFailed ignored -> ACTIVITY_FAILED;
+      case TimerStarted ignored -> TIMER_STARTED;
+      case TimerFired ignored -> TIMER_FIRED;
       case WorkflowCompleted ignored -> WORKFLOW_COMPLETED;
       case WorkflowFailed ignored -> WORKFLOW_FAILED;
     };
@@ -61,6 +67,9 @@ final class EventCodec {
               .put("attempts", failed.attempts())
               .set("failure", failureTree(failed.failure()))
               .toString();
+      case TimerStarted started ->
+          object().put("duration", started.duration().toString()).toString();
+      case TimerFired fired -> object().put("startedSeq", fired.startedSeq()).toString();
       case WorkflowCompleted completed -> completed.result().json();
       case WorkflowFailed failed -> failureJson(failed.failure());
     };
@@ -88,6 +97,11 @@ final class EventCodec {
             failure(node.required("failure")),
             node.has("attempts") ? node.get("attempts").asInt() : 1);
       }
+      case TIMER_STARTED ->
+          new TimerStarted(
+              Duration.parse(mapper.readTree(payloadJson).required("duration").asString()));
+      case TIMER_FIRED ->
+          new TimerFired(mapper.readTree(payloadJson).required("startedSeq").asInt());
       case WORKFLOW_COMPLETED -> new WorkflowCompleted(new Payload(payloadJson));
       case WORKFLOW_FAILED -> new WorkflowFailed(failure(mapper.readTree(payloadJson)));
       default -> throw new IllegalArgumentException("unknown event type " + type);

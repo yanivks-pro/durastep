@@ -7,6 +7,7 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -51,6 +52,35 @@ class ReplayHistoryTest {
     assertThatThrownBy(() -> ReplayHistory.of(history.entries()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("first event");
+  }
+
+  @Test
+  void rejectsATimerFiringForAStepThatIsAnActivity() {
+    History history = History.startedWith("x").scheduled("A.a").timerFired(2);
+
+    assertThatThrownBy(() -> ReplayHistory.of(history.entries()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("never started as a timer");
+  }
+
+  @Test
+  void rejectsAnActivityResultForAStepThatIsATimer() {
+    History history =
+        History.startedWith("x").timerStarted(Duration.ofSeconds(1)).completed(2, "r");
+
+    assertThatThrownBy(() -> ReplayHistory.of(history.entries()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("never scheduled");
+  }
+
+  @Test
+  void rejectsATimerThatFiresTwice() {
+    History history =
+        History.startedWith("x").timerStarted(Duration.ofSeconds(1)).timerFired(2).timerFired(2);
+
+    assertThatThrownBy(() -> ReplayHistory.of(history.entries()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("more than one outcome");
   }
 
   @Test

@@ -14,6 +14,8 @@ All notable changes to Durastep are recorded here. The format follows
   idempotency key.
 - `ActivityFailedException` in workflow code when an activity fails for good; workflows may catch it.
 - `ActivityTimeoutException` for attempts that run longer than their limit.
+- Durable timers: `ctx.sleep(Duration)` stores its wake-up time in Postgres, survives restarts, may last days, and is
+  fired by any engine about half a second after it is due.
 
 ### Changed
 

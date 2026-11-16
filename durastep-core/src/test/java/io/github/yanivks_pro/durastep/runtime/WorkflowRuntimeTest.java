@@ -12,6 +12,7 @@ import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
+import io.github.yanivks_pro.durastep.runtime.Command.StartTimer;
 import io.github.yanivks_pro.durastep.runtime.OrderExample.Order;
 import io.github.yanivks_pro.durastep.runtime.OrderExample.OrderActivities;
 import io.github.yanivks_pro.durastep.runtime.OrderExample.Receipt;
@@ -281,6 +282,94 @@ class WorkflowRuntimeTest {
 
     assertThatThrownBy(() -> runtime.decide(OrderExample.definition(), "order-42", withoutStart))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private static final WorkflowDefinition<Order, String> CHARGE_THEN_WAIT_THEN_EMAIL =
+      new WorkflowDefinition<>(
+          "ChargeThenWait",
+          Order.class,
+          () ->
+              (ctx, order) -> {
+                OrderActivities shop = ctx.activities(OrderActivities.class);
+                String chargeId = shop.chargeCard(order.id(), order.cents());
+                ctx.sleep(Duration.ofDays(3));
+                shop.sendEmail(order.id());
+                return chargeId + " at " + ctx.now();
+              });
+
+  @Test
+  void aSleepBecomesATimerCommand() {
+    History history =
+        History.startedWith(ORDER)
+            .scheduled("OrderActivities.chargeCard", "order-42", 4200)
+            .completed(2, "ch_9f2");
+
+    assertThat(runtime.decide(CHARGE_THEN_WAIT_THEN_EMAIL, "order-42", history.entries()))
+        .containsExactly(new StartTimer(Duration.ofDays(3)));
+  }
+
+  @Test
+  void aTimerThatHasNotFiredKeepsTheWorkflowWaiting() {
+    History history =
+        History.startedWith(ORDER)
+            .scheduled("OrderActivities.chargeCard", "order-42", 4200)
+            .completed(2, "ch_9f2")
+            .timerStarted(Duration.ofDays(3));
+
+    assertThat(runtime.decide(CHARGE_THEN_WAIT_THEN_EMAIL, "order-42", history.entries()))
+        .isEmpty();
+  }
+
+  @Test
+  void aFiredTimerLetsTheWorkflowContinueAndNowIsTheTimeItFired() {
+    History history =
+        History.startedWith(ORDER)
+            .scheduled("OrderActivities.chargeCard", "order-42", 4200)
+            .completed(2, "ch_9f2")
+            .timerStarted(Duration.ofDays(3))
+            .timerFired(4)
+            .scheduled("OrderActivities.sendEmail", "order-42")
+            .completed(6, null);
+
+    List<Command> commands =
+        runtime.decide(CHARGE_THEN_WAIT_THEN_EMAIL, "order-42", history.entries());
+
+    assertThat(commands)
+        .containsExactly(new CompleteWorkflow(json.toPayload("ch_9f2 at " + history.timeOf(7))));
+  }
+
+  @Test
+  void sleepingWhereTheHistoryHasAnActivityIsANonDeterminismError() {
+    History history =
+        History.startedWith(ORDER)
+            .scheduled("OrderActivities.chargeCard", "order-42", 4200)
+            .completed(2, "ch_9f2")
+            .scheduled("OrderActivities.sendEmail", "order-42");
+
+    assertThatThrownBy(
+            () -> runtime.decide(CHARGE_THEN_WAIT_THEN_EMAIL, "order-42", history.entries()))
+        .isInstanceOf(NonDeterminismException.class)
+        .hasMessageContaining("called sleep at step 2")
+        .hasMessageContaining("OrderActivities.sendEmail");
+  }
+
+  @Test
+  void aNegativeSleepIsAMistakeInTheWorkflowCode() {
+    WorkflowDefinition<Order, String> negative =
+        new WorkflowDefinition<>(
+            "Negative",
+            Order.class,
+            () ->
+                (ctx, order) -> {
+                  ctx.sleep(Duration.ofSeconds(-1));
+                  return "never";
+                });
+
+    assertThat(runtime.decide(negative, "order-42", History.startedWith(ORDER).entries()))
+        .singleElement()
+        .isInstanceOfSatisfying(
+            FailWorkflow.class,
+            fail -> assertThat(fail.failure().message()).contains("negative duration"));
   }
 
   private List<Command> decide(History history) {

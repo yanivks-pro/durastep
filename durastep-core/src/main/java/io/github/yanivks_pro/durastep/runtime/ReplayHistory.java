@@ -3,6 +3,8 @@ package io.github.yanivks_pro.durastep.runtime;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
@@ -14,10 +16,12 @@ import java.util.Map;
 
 record ReplayHistory(WorkflowStarted started, Instant startedAt, List<Step> steps) {
 
+  static final String SLEEP = "sleep";
+
   record Step(HistoryEntry scheduled, HistoryEntry outcome) {
 
-    String activity() {
-      return ((ActivityScheduled) scheduled.event()).activity();
+    String name() {
+      return nameOf(scheduled);
     }
 
     boolean hasOutcome() {
@@ -29,9 +33,9 @@ record ReplayHistory(WorkflowStarted started, Instant startedAt, List<Step> step
     if (history.isEmpty() || !(history.getFirst().event() instanceof WorkflowStarted started)) {
       throw new IllegalArgumentException("history must begin with WorkflowStarted");
     }
-    Map<Integer, HistoryEntry> scheduledBySeq = new HashMap<>();
+    Map<Integer, HistoryEntry> stepsBySeq = new HashMap<>();
     Map<Integer, HistoryEntry> outcomeBySeq = new HashMap<>();
-    List<HistoryEntry> scheduledInOrder = new ArrayList<>();
+    List<HistoryEntry> stepsInOrder = new ArrayList<>();
     for (int i = 0; i < history.size(); i++) {
       HistoryEntry entry = history.get(i);
       boolean first = i == 0;
@@ -47,13 +51,21 @@ record ReplayHistory(WorkflowStarted started, Instant startedAt, List<Step> step
             throw new IllegalArgumentException("WorkflowStarted may only be the first event");
         case WorkflowStarted ignored -> {}
         case ActivityScheduled ignored -> {
-          scheduledBySeq.put(entry.seq(), entry);
-          scheduledInOrder.add(entry);
+          stepsBySeq.put(entry.seq(), entry);
+          stepsInOrder.add(entry);
+        }
+        case TimerStarted ignored -> {
+          stepsBySeq.put(entry.seq(), entry);
+          stepsInOrder.add(entry);
         }
         case ActivityCompleted completed ->
-            recordOutcome(entry, completed.scheduledSeq(), scheduledBySeq, outcomeBySeq);
+            recordOutcome(
+                entry, completed.scheduledSeq(), ActivityScheduled.class, stepsBySeq, outcomeBySeq);
         case ActivityFailed failed ->
-            recordOutcome(entry, failed.scheduledSeq(), scheduledBySeq, outcomeBySeq);
+            recordOutcome(
+                entry, failed.scheduledSeq(), ActivityScheduled.class, stepsBySeq, outcomeBySeq);
+        case TimerFired fired ->
+            recordOutcome(entry, fired.startedSeq(), TimerStarted.class, stepsBySeq, outcomeBySeq);
         case WorkflowCompleted ignored ->
             throw new IllegalStateException("the workflow has already completed");
         case WorkflowFailed ignored ->
@@ -61,27 +73,36 @@ record ReplayHistory(WorkflowStarted started, Instant startedAt, List<Step> step
       }
     }
     List<Step> steps =
-        scheduledInOrder.stream()
-            .map(scheduled -> new Step(scheduled, outcomeBySeq.get(scheduled.seq())))
-            .toList();
+        stepsInOrder.stream().map(step -> new Step(step, outcomeBySeq.get(step.seq()))).toList();
     return new ReplayHistory(started, history.getFirst().recordedAt(), steps);
+  }
+
+  static String nameOf(HistoryEntry step) {
+    return switch (step.event()) {
+      case ActivityScheduled scheduled -> scheduled.activity();
+      case TimerStarted ignored -> SLEEP;
+      default -> throw new IllegalArgumentException("event " + step.seq() + " is not a step");
+    };
   }
 
   private static void recordOutcome(
       HistoryEntry outcome,
-      int scheduledSeq,
-      Map<Integer, HistoryEntry> scheduledBySeq,
+      int stepSeq,
+      Class<? extends HistoryEvent> expectedStep,
+      Map<Integer, HistoryEntry> stepsBySeq,
       Map<Integer, HistoryEntry> outcomeBySeq) {
-    if (!scheduledBySeq.containsKey(scheduledSeq)) {
+    HistoryEntry step = stepsBySeq.get(stepSeq);
+    if (step == null || !expectedStep.isInstance(step.event())) {
       throw new IllegalArgumentException(
           "event "
               + outcome.seq()
-              + " refers to activity "
-              + scheduledSeq
-              + ", which was never scheduled");
+              + " refers to step "
+              + stepSeq
+              + ", which was never "
+              + (expectedStep == TimerStarted.class ? "started as a timer" : "scheduled"));
     }
-    if (outcomeBySeq.putIfAbsent(scheduledSeq, outcome) != null) {
-      throw new IllegalArgumentException("activity " + scheduledSeq + " has more than one outcome");
+    if (outcomeBySeq.putIfAbsent(stepSeq, outcome) != null) {
+      throw new IllegalArgumentException("step " + stepSeq + " has more than one outcome");
     }
   }
 }
