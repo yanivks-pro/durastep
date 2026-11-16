@@ -17,6 +17,9 @@ All notable changes to Durastep are recorded here. The format follows
   heartbeats keeps its lease; if its engine crashes or freezes, it is taken over after the heartbeat timeout
   instead of its whole attempt timeout. A heartbeat from an attempt that was taken over throws
   `ActivityLeaseLostException`.
+- Named queues: `ActivityOptions.queue("gpu")` sends activities to a queue, and
+  `DurastepEngine.Builder.activityQueues(...)` chooses which queues an engine runs. Notifications wake only
+  engines that serve the queue.
 
 ### Changed
 

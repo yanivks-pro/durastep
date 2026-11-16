@@ -34,6 +34,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
 import javax.sql.DataSource;
 
@@ -130,11 +131,11 @@ public final class JdbcWorkflowStore {
   }
 
   public Optional<ClaimedTask> claim(TaskKind kind, String queue, String owner, Duration lease) {
-    return claim(kind, queue, owner, lease, 1).stream().findFirst();
+    return claim(kind, Set.of(queue), owner, lease, 1).stream().findFirst();
   }
 
   public List<ClaimedTask> claim(
-      TaskKind kind, String queue, String owner, Duration lease, int limit) {
+      TaskKind kind, Set<String> queues, String owner, Duration lease, int limit) {
     if (limit < 1) {
       throw new IllegalArgumentException("limit must be at least 1, was " + limit);
     }
@@ -150,14 +151,14 @@ public final class JdbcWorkflowStore {
                       + " fencing_token = fencing_token + 1"
                       + " WHERE id IN (SELECT id FROM "
                       + tasks
-                      + " WHERE kind = ? AND queue = ? AND visible_at <= now()"
+                      + " WHERE kind = ? AND queue = ANY(?) AND visible_at <= now()"
                       + " AND (lease_until IS NULL OR lease_until < now())"
                       + " ORDER BY visible_at, id LIMIT ? FOR UPDATE SKIP LOCKED)"
                       + " RETURNING id, workflow_id, activity_seq, attempt, fencing_token")) {
             statement.setString(1, owner);
             statement.setLong(2, lease.toMillis());
             statement.setString(3, kind.name());
-            statement.setString(4, queue);
+            statement.setArray(4, connection.createArrayOf("text", queues.toArray()));
             statement.setInt(5, limit);
             List<ClaimedTask> claimed = new ArrayList<>();
             try (ResultSet row = statement.executeQuery()) {
@@ -249,10 +250,11 @@ public final class JdbcWorkflowStore {
                     connection,
                     "INSERT INTO "
                         + tasks
-                        + " (workflow_id, kind, activity_seq) VALUES (?, 'ACTIVITY', ?)",
+                        + " (workflow_id, kind, activity_seq, queue) VALUES (?, 'ACTIVITY', ?, ?)",
                     task.workflowId(),
-                    seq);
-                notifyWork(connection, TaskKind.ACTIVITY, DEFAULT_QUEUE);
+                    seq,
+                    schedule.options().queue());
+                notifyWork(connection, TaskKind.ACTIVITY, schedule.options().queue());
               }
               case StartTimer timer -> {
                 appendEvent(

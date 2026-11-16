@@ -26,6 +26,7 @@ public final class ActivityOptions {
   private final Duration attemptTimeout;
   private final Duration totalTimeout;
   private final Duration heartbeatTimeout;
+  private final String queue;
   private final RetryPolicy retryPolicy;
 
   private ActivityOptions(Builder builder) {
@@ -37,6 +38,7 @@ public final class ActivityOptions {
             ? null
             : requirePositive(builder.heartbeatTimeout, "heartbeatTimeout");
     this.retryPolicy = Objects.requireNonNull(builder.retryPolicy, "retryPolicy");
+    this.queue = builder.queue;
   }
 
   /**
@@ -79,6 +81,16 @@ public final class ActivityOptions {
   }
 
   /**
+   * Returns the queue these activities are sent to. Only engines that serve this queue, set with
+   * {@link DurastepEngine.Builder#activityQueues}, run them.
+   *
+   * @return the queue name, {@code default} unless set
+   */
+  public String queue() {
+    return queue;
+  }
+
+  /**
    * Returns the retry policy.
    *
    * @return the retry policy
@@ -93,12 +105,13 @@ public final class ActivityOptions {
         && attemptTimeout.equals(that.attemptTimeout)
         && Objects.equals(totalTimeout, that.totalTimeout)
         && Objects.equals(heartbeatTimeout, that.heartbeatTimeout)
+        && queue.equals(that.queue)
         && retryPolicy.equals(that.retryPolicy);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(attemptTimeout, totalTimeout, heartbeatTimeout, retryPolicy);
+    return Objects.hash(attemptTimeout, totalTimeout, heartbeatTimeout, retryPolicy, queue);
   }
 
   @Override
@@ -111,7 +124,20 @@ public final class ActivityOptions {
         + heartbeatTimeout
         + ", retryPolicy="
         + retryPolicy
+        + ", queue="
+        + queue
         + "]";
+  }
+
+  static String requireQueueName(String queue) {
+    Objects.requireNonNull(queue, "queue");
+    if (!queue.matches("[A-Za-z0-9._-]{1,100}")) {
+      throw new IllegalArgumentException(
+          "a queue name must have 1 to 100 letters, digits, dots, dashes or underscores, was '"
+              + queue
+              + "'");
+    }
+    return queue;
   }
 
   private static Duration requirePositive(Duration duration, String name) {
@@ -128,6 +154,7 @@ public final class ActivityOptions {
     private Duration attemptTimeout = Duration.ofMinutes(1);
     private Duration totalTimeout;
     private Duration heartbeatTimeout;
+    private String queue = "default";
     private RetryPolicy retryPolicy = RetryPolicy.DEFAULT;
 
     private Builder() {}
@@ -164,6 +191,19 @@ public final class ActivityOptions {
      */
     public Builder heartbeatTimeout(Duration heartbeatTimeout) {
       this.heartbeatTimeout = Objects.requireNonNull(heartbeatTimeout, "heartbeatTimeout");
+      return this;
+    }
+
+    /**
+     * Sends these activities to a named queue, so that only engines serving that queue run them,
+     * for example machines with a GPU. Defaults to {@code default}.
+     *
+     * @param queue a name of 1 to 100 letters, digits, dots, dashes or underscores
+     * @return this builder
+     * @throws IllegalArgumentException if the name is not valid
+     */
+    public Builder queue(String queue) {
+      this.queue = requireQueueName(queue);
       return this;
     }
 
