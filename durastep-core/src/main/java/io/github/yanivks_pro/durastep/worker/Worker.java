@@ -16,19 +16,23 @@ import io.github.yanivks_pro.durastep.store.ActivityToRun;
 import io.github.yanivks_pro.durastep.store.ClaimedTask;
 import io.github.yanivks_pro.durastep.store.CrashPoint;
 import io.github.yanivks_pro.durastep.store.CrashPoints;
+import io.github.yanivks_pro.durastep.store.DatabaseHealth;
 import io.github.yanivks_pro.durastep.store.DecisionInput;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import io.github.yanivks_pro.durastep.store.StaleTaskException;
+import io.github.yanivks_pro.durastep.store.StoreException;
 import io.github.yanivks_pro.durastep.store.TaskKind;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +42,7 @@ public final class Worker {
   public static final Duration TIMER_CHECK_INTERVAL = Duration.ofMillis(500);
 
   private static final int TIMERS_PER_BATCH = 100;
+  private static final Duration SAVE_MARGIN = Duration.ofSeconds(1);
 
   static final RetryPolicy BLOCKED_RETRIES =
       new RetryPolicy(Integer.MAX_VALUE, Duration.ofSeconds(1), Duration.ofMinutes(5), List.of());
@@ -91,11 +96,13 @@ public final class Worker {
   private final String owner;
   private final Duration lease;
   private final CrashPoints crashPoints;
+  private final DatabaseHealth health;
   private final Semaphore workflowPermits;
   private final Semaphore activityPermits;
   private final Semaphore workflowWakeups = new Semaphore(0);
   private final Semaphore activityWakeups = new Semaphore(0);
   private final Set<Thread> inFlight = ConcurrentHashMap.newKeySet();
+  private final Map<Long, Long> leaseExtendedAt = new ConcurrentHashMap<>();
 
   private volatile boolean running;
   private List<Thread> pollers = List.of();
@@ -106,7 +113,9 @@ public final class Worker {
       WorkflowRuntime workflowRuntime,
       ActivityRuntime activityRuntime,
       Settings settings,
-      CrashPoints crashPoints) {
+      CrashPoints crashPoints,
+      DatabaseHealth health) {
+    this.health = health;
     this.store = store;
     this.workflows = workflows;
     this.workflowRuntime = workflowRuntime;
@@ -157,15 +166,38 @@ public final class Worker {
     long deadline = System.nanoTime() + grace.toNanos();
     for (Thread task : Set.copyOf(inFlight)) {
       long remaining = deadline - System.nanoTime();
-      if (remaining <= 0 || !task.join(Duration.ofNanos(remaining))) {
-        task.interrupt();
+      if (remaining > 0) {
+        task.join(Duration.ofNanos(remaining));
       }
+    }
+    Set<Thread> unfinished = Set.copyOf(inFlight);
+    if (!unfinished.isEmpty()) {
+      releaseLeases(unfinished.size());
+      unfinished.forEach(Thread::interrupt);
     }
     log.info("worker {} stopped", owner);
   }
 
   public String owner() {
     return owner;
+  }
+
+  private void releaseLeases(int unfinished) {
+    try {
+      int released = store.releaseLeases(owner);
+      log.info(
+          "worker {} stopped {} unfinished tasks after its grace period and released {} leases"
+              + " so that other engines take them over now",
+          owner,
+          unfinished,
+          released);
+    } catch (StoreException e) {
+      log.warn(
+          "worker {} could not release its leases; other engines take its tasks over when the"
+              + " leases expire: {}",
+          owner,
+          e.toString());
+    }
   }
 
   public void wake(TaskKind kind, String queue) {
@@ -183,6 +215,7 @@ public final class Worker {
   }
 
   private void poll(TaskKind kind, Semaphore permits, Semaphore wakeups) {
+    int failures = 0;
     while (running) {
       int granted = 0;
       try {
@@ -194,6 +227,8 @@ public final class Worker {
         Set<String> queues =
             kind == TaskKind.WORKFLOW ? Set.of(DEFAULT_QUEUE) : settings.activityQueues();
         List<ClaimedTask> claimed = store.claim(kind, queues, owner, lease, granted);
+        health.succeeded();
+        failures = 0;
         permits.release(granted - claimed.size());
         granted = 0;
         for (ClaimedTask task : claimed) {
@@ -206,6 +241,19 @@ public final class Worker {
         permits.release(granted);
         Thread.currentThread().interrupt();
         return;
+      } catch (StoreException e) {
+        permits.release(granted);
+        if (!running) {
+          return;
+        }
+        health.failed(e);
+        failures++;
+        try {
+          Thread.sleep(health.backoff(failures));
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          return;
+        }
       } catch (RuntimeException e) {
         permits.release(granted);
         if (!running) {
@@ -242,6 +290,8 @@ public final class Worker {
                     }
                   } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                  } catch (StoreException e) {
+                    health.failed(e);
                   } catch (RuntimeException e) {
                     log.error(
                         "worker {} hit an unexpected error on {} task {} of workflow {}",
@@ -260,14 +310,30 @@ public final class Worker {
   }
 
   private void fireTimers() {
+    int failures = 0;
     while (running) {
       try {
-        if (store.fireDueTimers(TIMERS_PER_BATCH) < TIMERS_PER_BATCH) {
+        int fired = store.fireDueTimers(TIMERS_PER_BATCH);
+        health.succeeded();
+        failures = 0;
+        if (fired < TIMERS_PER_BATCH) {
           Thread.sleep(TIMER_CHECK_INTERVAL);
         }
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         return;
+      } catch (StoreException e) {
+        if (!running) {
+          return;
+        }
+        health.failed(e);
+        failures++;
+        try {
+          Thread.sleep(health.backoff(failures));
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          return;
+        }
       } catch (RuntimeException e) {
         if (!running) {
           return;
@@ -335,6 +401,7 @@ public final class Worker {
   private boolean extendLease(ClaimedTask task, Duration attemptLease) {
     try {
       store.extendLease(task, attemptLease);
+      leaseExtendedAt.put(task.id(), System.nanoTime());
       return true;
     } catch (StaleTaskException e) {
       return false;
@@ -348,6 +415,7 @@ public final class Worker {
       Duration attemptLease =
           options.heartbeatTimeout().orElse(options.attemptTimeout().plus(lease));
       store.extendLease(task, attemptLease);
+      leaseExtendedAt.put(task.id(), System.nanoTime());
       ActivityResult result =
           activityRuntime.execute(
               activity.activity(),
@@ -356,6 +424,9 @@ public final class Worker {
               activity.scheduledSeq(),
               options,
               () -> extendLease(task, attemptLease));
+      long saveBefore =
+          leaseExtendedAt.getOrDefault(task.id(), System.nanoTime())
+              + attemptLease.minus(SAVE_MARGIN).toNanos();
       crashPoints.reached(CrashPoint.AFTER_ACTIVITY_RAN);
       if (result instanceof Failed failed
           && failed.retryable()
@@ -363,7 +434,9 @@ public final class Worker {
         Duration delay =
             Backoff.delayAfter(options.retryPolicy(), task.attempt(), ThreadLocalRandom.current());
         boolean retried =
-            store.retryActivity(task, failed.failure(), delay, options.totalTimeout());
+            saveBefore(
+                saveBefore,
+                () -> store.retryActivity(task, failed.failure(), delay, options.totalTimeout()));
         log.info(
             retried
                 ? "attempt {} of {} for workflow {} failed with {}; retrying in {}"
@@ -374,7 +447,12 @@ public final class Worker {
             failed.failure().type(),
             delay);
       } else {
-        store.completeActivity(task, result);
+        saveBefore(
+            saveBefore,
+            () -> {
+              store.completeActivity(task, result);
+              return true;
+            });
       }
     } catch (StaleTaskException e) {
       log.warn(
@@ -382,6 +460,33 @@ public final class Worker {
           activity.activity(),
           task.workflowId(),
           e.getMessage());
+    } catch (StoreException e) {
+      log.warn(
+          "could not save the outcome of {} for workflow {} before its lease ended; it will run"
+              + " again with the same idempotency key",
+          activity.activity(),
+          task.workflowId());
+    } finally {
+      leaseExtendedAt.remove(task.id());
+    }
+  }
+
+  private <T> T saveBefore(long deadlineNanos, Supplier<T> save) throws InterruptedException {
+    int failures = 0;
+    while (true) {
+      try {
+        T saved = save.get();
+        health.succeeded();
+        return saved;
+      } catch (StoreException e) {
+        health.failed(e);
+        failures++;
+        Duration wait = health.backoff(failures);
+        if (System.nanoTime() + wait.toNanos() > deadlineNanos) {
+          throw e;
+        }
+        Thread.sleep(wait);
+      }
     }
   }
 }

@@ -20,9 +20,15 @@ All notable changes to Durastep are recorded here. The format follows
 - Named queues: `ActivityOptions.queue("gpu")` sends activities to a queue, and
   `DurastepEngine.Builder.activityQueues(...)` chooses which queues an engine runs. Notifications wake only
   engines that serve the queue.
+- Graceful shutdown: `stop()` stops claiming, gives work in progress `shutdownGrace` (default 30 seconds) to
+  finish, then interrupts what is left and releases its leases, so other engines take it over at once.
+- Database outages: engines pause with backoff from 1 to 30 seconds, log one warning when the database becomes
+  unreachable and one message when it is back, and keep retrying to save activity results until their lease
+  ends. A ten-second outage in the middle of a load loses nothing and repeats nothing.
 
 ### Changed
 
+- `stop()` waits up to 30 seconds by default instead of 10 before giving up on work in progress.
 - Engines look for work every second when nothing wakes them, instead of every 100 ms, and hold one extra
   connection for notifications. The Postgres driver is now a compile-time dependency.
 

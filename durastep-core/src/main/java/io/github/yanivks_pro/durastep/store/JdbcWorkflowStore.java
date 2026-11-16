@@ -32,6 +32,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -645,6 +646,35 @@ public final class JdbcWorkflowStore {
         return WorkflowState.valueOf(row.getString(1));
       }
     }
+  }
+
+  public int releaseLeases(String owner) {
+    return transactions.inTransaction(
+        "release the leases of " + owner,
+        connection -> {
+          Set<String> released = new HashSet<>();
+          try (PreparedStatement statement =
+              connection.prepareStatement(
+                  "UPDATE "
+                      + tasks
+                      + " SET lease_owner = NULL, lease_until = NULL WHERE lease_owner = ?"
+                      + " RETURNING kind, queue")) {
+            statement.setString(1, owner);
+            try (ResultSet row = statement.executeQuery()) {
+              while (row.next()) {
+                released.add(row.getString(1) + ":" + row.getString(2));
+              }
+            }
+          }
+          for (String work : released) {
+            int separator = work.indexOf(':');
+            notifyWork(
+                connection,
+                TaskKind.valueOf(work.substring(0, separator)),
+                work.substring(separator + 1));
+          }
+          return released.size();
+        });
   }
 
   public String notificationChannel() {

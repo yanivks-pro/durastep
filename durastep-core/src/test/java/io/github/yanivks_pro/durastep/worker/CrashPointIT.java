@@ -19,6 +19,7 @@ import io.github.yanivks_pro.durastep.runtime.WorkflowRegistry;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRuntime;
 import io.github.yanivks_pro.durastep.store.CrashPoint;
 import io.github.yanivks_pro.durastep.store.CrashPoints;
+import io.github.yanivks_pro.durastep.store.DatabaseHealth;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -260,7 +261,8 @@ class CrashPointIT {
             new WorkflowRuntime(json),
             new ActivityRuntime(activities, json),
             new Worker.Settings(owner, LEASE, POLL, 4, 4),
-            crashPoints);
+            crashPoints,
+            new DatabaseHealth());
     worker.start();
     workers.add(worker);
     return worker;
