@@ -8,7 +8,7 @@ import java.sql.Statement;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 import javax.sql.DataSource;
 import org.postgresql.PGConnection;
 import org.postgresql.PGNotification;
@@ -25,12 +25,13 @@ public final class NotificationListener {
 
   private final DataSource dataSource;
   private final String channel;
-  private final Consumer<TaskKind> onWork;
+  private final BiConsumer<TaskKind, String> onWork;
 
   private volatile boolean running;
   private Thread thread;
 
-  public NotificationListener(DataSource dataSource, String channel, Consumer<TaskKind> onWork) {
+  public NotificationListener(
+      DataSource dataSource, String channel, BiConsumer<TaskKind, String> onWork) {
     this.dataSource = dataSource;
     this.channel = channel;
     this.onWork = onWork;
@@ -96,7 +97,8 @@ public final class NotificationListener {
       return;
     }
     try {
-      onWork.accept(TaskKind.valueOf(payload.substring(0, separator)));
+      onWork.accept(
+          TaskKind.valueOf(payload.substring(0, separator)), payload.substring(separator + 1));
     } catch (IllegalArgumentException e) {
       log.debug("ignored an unexpected notification {}", payload);
     }

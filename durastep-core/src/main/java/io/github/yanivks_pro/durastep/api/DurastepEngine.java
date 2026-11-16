@@ -13,7 +13,9 @@ import io.github.yanivks_pro.durastep.store.NotificationListener;
 import io.github.yanivks_pro.durastep.worker.Worker;
 import java.time.Duration;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
@@ -66,7 +68,8 @@ public final class DurastepEngine implements AutoCloseable {
                 builder.leaseDuration,
                 SAFETY_POLL_INTERVAL,
                 builder.workflowConcurrency,
-                builder.activityConcurrency),
+                builder.activityConcurrency,
+                builder.activityQueues),
             CrashPoints.NONE);
     this.client = new StoreBackedClient(store, converter, RESULT_POLL_INTERVAL);
     this.listener = new NotificationListener(dataSource, store.notificationChannel(), worker::wake);
@@ -148,6 +151,7 @@ public final class DurastepEngine implements AutoCloseable {
     private Duration leaseDuration = Duration.ofSeconds(30);
     private int workflowConcurrency = 10;
     private int activityConcurrency = 100;
+    private Set<String> activityQueues = Set.of(JdbcWorkflowStore.DEFAULT_QUEUE);
     private final WorkflowRegistry workflows = new WorkflowRegistry();
     private final ActivityRegistry activities = new ActivityRegistry();
 
@@ -261,6 +265,30 @@ public final class DurastepEngine implements AutoCloseable {
      */
     public Builder activityConcurrency(int activityConcurrency) {
       this.activityConcurrency = requireAtLeastOne(activityConcurrency, "activityConcurrency");
+      return this;
+    }
+
+    /**
+     * Sets which activity queues this engine runs activities from. Defaults to {@code default}. An
+     * engine must register the activities of every queue it serves.
+     *
+     * <pre>{@code
+     * builder.activityQueues("default", "gpu");
+     * }</pre>
+     *
+     * @param queues one or more queue names
+     * @return this builder
+     * @throws IllegalArgumentException if no queue or an invalid name is given
+     */
+    public Builder activityQueues(String... queues) {
+      if (queues.length == 0) {
+        throw new IllegalArgumentException("an engine must serve at least one activity queue");
+      }
+      Set<String> names = new LinkedHashSet<>();
+      for (String queue : queues) {
+        names.add(ActivityOptions.requireQueueName(queue));
+      }
+      this.activityQueues = Set.copyOf(names);
       return this;
     }
 

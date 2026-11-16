@@ -46,6 +46,18 @@ class ActivityOptionsTest {
   }
 
   @Test
+  void activitiesGoToTheDefaultQueueUnlessANamedQueueIsGiven() {
+    assertThat(ActivityOptions.DEFAULT.queue()).isEqualTo("default");
+    assertThat(ActivityOptions.builder().queue("gpu-eu.1").build().queue()).isEqualTo("gpu-eu.1");
+    assertThatThrownBy(() -> ActivityOptions.builder().queue("has space").build())
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> ActivityOptions.builder().queue("").build())
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> DurastepEngine.builder().activityQueues())
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void timeoutsMustBePositive() {
     assertThatThrownBy(() -> ActivityOptions.builder().attemptTimeout(Duration.ZERO).build())
         .isInstanceOf(IllegalArgumentException.class);

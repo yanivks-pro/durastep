@@ -49,9 +49,29 @@ public final class Worker {
       Duration lease,
       Duration pollInterval,
       int workflowConcurrency,
-      int activityConcurrency) {
+      int activityConcurrency,
+      Set<String> activityQueues) {
+
+    public Settings(
+        String owner,
+        Duration lease,
+        Duration pollInterval,
+        int workflowConcurrency,
+        int activityConcurrency) {
+      this(
+          owner,
+          lease,
+          pollInterval,
+          workflowConcurrency,
+          activityConcurrency,
+          Set.of(DEFAULT_QUEUE));
+    }
 
     public Settings {
+      activityQueues = Set.copyOf(activityQueues);
+      if (activityQueues.isEmpty()) {
+        throw new IllegalArgumentException("an engine must serve at least one activity queue");
+      }
       if (workflowConcurrency < 1 || activityConcurrency < 1) {
         throw new IllegalArgumentException(
             "concurrency must be at least 1, was "
@@ -148,7 +168,14 @@ public final class Worker {
     return owner;
   }
 
-  public void wake(TaskKind kind) {
+  public void wake(TaskKind kind, String queue) {
+    if (kind == TaskKind.ACTIVITY && !settings.activityQueues().contains(queue)) {
+      return;
+    }
+    wake(kind);
+  }
+
+  private void wake(TaskKind kind) {
     Semaphore wakeups = kind == TaskKind.WORKFLOW ? workflowWakeups : activityWakeups;
     if (wakeups.availablePermits() == 0) {
       wakeups.release();
@@ -164,7 +191,9 @@ public final class Worker {
         }
         granted = 1 + permits.drainPermits();
         wakeups.drainPermits();
-        List<ClaimedTask> claimed = store.claim(kind, DEFAULT_QUEUE, owner, lease, granted);
+        Set<String> queues =
+            kind == TaskKind.WORKFLOW ? Set.of(DEFAULT_QUEUE) : settings.activityQueues();
+        List<ClaimedTask> claimed = store.claim(kind, queues, owner, lease, granted);
         permits.release(granted - claimed.size());
         granted = 0;
         for (ClaimedTask task : claimed) {

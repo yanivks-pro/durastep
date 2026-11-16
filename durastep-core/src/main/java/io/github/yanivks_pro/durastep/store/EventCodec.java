@@ -33,6 +33,7 @@ final class EventCodec {
   static final String WORKFLOW_FAILED = "WORKFLOW_FAILED";
 
   private static final int STACK_FRAMES_PER_ERROR = 20;
+  private static final String DEFAULT_QUEUE = JdbcWorkflowStore.DEFAULT_QUEUE;
 
   private final JsonMapper mapper = JsonMapper.builder().build();
 
@@ -142,6 +143,9 @@ final class EventCodec {
     options
         .heartbeatTimeout()
         .ifPresent(heartbeat -> node.put("heartbeatTimeout", heartbeat.toString()));
+    if (!options.queue().equals(DEFAULT_QUEUE)) {
+      node.put("queue", options.queue());
+    }
     ArrayNode nonRetryable = mapper.createArrayNode();
     retry.nonRetryableTypes().forEach(nonRetryable::add);
     node.set(
@@ -169,6 +173,9 @@ final class EventCodec {
                     nonRetryable));
     if (node.has("totalTimeout")) {
       builder.totalTimeout(Duration.parse(node.get("totalTimeout").asString()));
+    }
+    if (node.has("queue")) {
+      builder.queue(node.get("queue").asString());
     }
     if (node.has("heartbeatTimeout")) {
       builder.heartbeatTimeout(Duration.parse(node.get("heartbeatTimeout").asString()));
