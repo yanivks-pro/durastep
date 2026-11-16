@@ -40,4 +40,15 @@ public interface ActivityContext {
    * @return the idempotency key, for example {@code order-42/activity-2}
    */
   String idempotencyKey();
+
+  /**
+   * Tells the engine that this attempt is still making progress. Long activities whose {@link
+   * ActivityOptions#heartbeatTimeout()} is set call it regularly, more often than that timeout.
+   * Calls are cheap: at most one in every third of the timeout reaches the database. Without a
+   * heartbeat timeout, it does nothing.
+   *
+   * @throws ActivityLeaseLostException if another engine has taken this attempt over, in which case
+   *     the activity should stop, because its result will be discarded
+   */
+  void heartbeat();
 }

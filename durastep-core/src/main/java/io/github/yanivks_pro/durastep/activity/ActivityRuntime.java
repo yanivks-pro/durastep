@@ -33,6 +33,17 @@ public final class ActivityRuntime {
       int scheduledSeq,
       ActivityOptions options)
       throws InterruptedException {
+    return execute(activity, arguments, workflowId, scheduledSeq, options, Heartbeat.NONE);
+  }
+
+  public ActivityResult execute(
+      String activity,
+      Payload arguments,
+      String workflowId,
+      int scheduledSeq,
+      ActivityOptions options,
+      Heartbeat heartbeat)
+      throws InterruptedException {
     Optional<RegisteredActivity> registered = registry.find(activity);
     if (registered.isEmpty()) {
       return new Failed(
@@ -50,7 +61,14 @@ public final class ActivityRuntime {
     }
 
     CompletableFuture<Object> outcome = new CompletableFuture<>();
-    RunningActivity context = new RunningActivity(workflowId, scheduledSeq);
+    RunningActivity context =
+        options
+            .heartbeatTimeout()
+            .map(
+                timeout ->
+                    new RunningActivity(
+                        workflowId, scheduledSeq, heartbeat, timeout, System::nanoTime))
+            .orElseGet(() -> new RunningActivity(workflowId, scheduledSeq));
     Thread attempt =
         Thread.ofVirtual()
             .name("durastep-activity-" + context.idempotencyKey())

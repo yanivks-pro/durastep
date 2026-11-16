@@ -25,12 +25,17 @@ public final class ActivityOptions {
 
   private final Duration attemptTimeout;
   private final Duration totalTimeout;
+  private final Duration heartbeatTimeout;
   private final RetryPolicy retryPolicy;
 
   private ActivityOptions(Builder builder) {
     this.attemptTimeout = requirePositive(builder.attemptTimeout, "attemptTimeout");
     this.totalTimeout =
         builder.totalTimeout == null ? null : requirePositive(builder.totalTimeout, "totalTimeout");
+    this.heartbeatTimeout =
+        builder.heartbeatTimeout == null
+            ? null
+            : requirePositive(builder.heartbeatTimeout, "heartbeatTimeout");
     this.retryPolicy = Objects.requireNonNull(builder.retryPolicy, "retryPolicy");
   }
 
@@ -63,6 +68,17 @@ public final class ActivityOptions {
   }
 
   /**
+   * Returns how long an attempt may go without calling {@link ActivityContext#heartbeat()}, if set.
+   * While an attempt heartbeats, no other engine takes it over; if its engine crashes, the attempt
+   * is taken over once this time has passed, instead of after the whole attempt timeout.
+   *
+   * @return the heartbeat timeout, or empty if the activity does not heartbeat
+   */
+  public Optional<Duration> heartbeatTimeout() {
+    return Optional.ofNullable(heartbeatTimeout);
+  }
+
+  /**
    * Returns the retry policy.
    *
    * @return the retry policy
@@ -76,12 +92,13 @@ public final class ActivityOptions {
     return other instanceof ActivityOptions that
         && attemptTimeout.equals(that.attemptTimeout)
         && Objects.equals(totalTimeout, that.totalTimeout)
+        && Objects.equals(heartbeatTimeout, that.heartbeatTimeout)
         && retryPolicy.equals(that.retryPolicy);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(attemptTimeout, totalTimeout, retryPolicy);
+    return Objects.hash(attemptTimeout, totalTimeout, heartbeatTimeout, retryPolicy);
   }
 
   @Override
@@ -90,6 +107,8 @@ public final class ActivityOptions {
         + attemptTimeout
         + ", totalTimeout="
         + totalTimeout
+        + ", heartbeatTimeout="
+        + heartbeatTimeout
         + ", retryPolicy="
         + retryPolicy
         + "]";
@@ -108,6 +127,7 @@ public final class ActivityOptions {
 
     private Duration attemptTimeout = Duration.ofMinutes(1);
     private Duration totalTimeout;
+    private Duration heartbeatTimeout;
     private RetryPolicy retryPolicy = RetryPolicy.DEFAULT;
 
     private Builder() {}
@@ -131,6 +151,19 @@ public final class ActivityOptions {
      */
     public Builder totalTimeout(Duration totalTimeout) {
       this.totalTimeout = Objects.requireNonNull(totalTimeout, "totalTimeout");
+      return this;
+    }
+
+    /**
+     * Sets how long an attempt may go without a heartbeat. Use it for long activities that call
+     * {@link ActivityContext#heartbeat()} regularly, so a crashed engine's attempt is taken over
+     * quickly. Not set by default.
+     *
+     * @param heartbeatTimeout a positive duration
+     * @return this builder
+     */
+    public Builder heartbeatTimeout(Duration heartbeatTimeout) {
+      this.heartbeatTimeout = Objects.requireNonNull(heartbeatTimeout, "heartbeatTimeout");
       return this;
     }
 

@@ -13,6 +13,10 @@ All notable changes to Durastep are recorded here. The format follows
   own virtual thread.
 - Instant wake-ups: every commit that creates work sends a Postgres notification, and each engine listens on
   one connection, so idle engines start new work at once. The connection reconnects by itself if it breaks.
+- Heartbeats: `ActivityOptions.heartbeatTimeout` and `ActivityContext.heartbeat()`. A long activity that
+  heartbeats keeps its lease; if its engine crashes or freezes, it is taken over after the heartbeat timeout
+  instead of its whole attempt timeout. A heartbeat from an attempt that was taken over throws
+  `ActivityLeaseLostException`.
 
 ### Changed
 

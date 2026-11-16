@@ -139,6 +139,9 @@ final class EventCodec {
     RetryPolicy retry = options.retryPolicy();
     ObjectNode node = object().put("attemptTimeout", options.attemptTimeout().toString());
     options.totalTimeout().ifPresent(total -> node.put("totalTimeout", total.toString()));
+    options
+        .heartbeatTimeout()
+        .ifPresent(heartbeat -> node.put("heartbeatTimeout", heartbeat.toString()));
     ArrayNode nonRetryable = mapper.createArrayNode();
     retry.nonRetryableTypes().forEach(nonRetryable::add);
     node.set(
@@ -166,6 +169,9 @@ final class EventCodec {
                     nonRetryable));
     if (node.has("totalTimeout")) {
       builder.totalTimeout(Duration.parse(node.get("totalTimeout").asString()));
+    }
+    if (node.has("heartbeatTimeout")) {
+      builder.heartbeatTimeout(Duration.parse(node.get("heartbeatTimeout").asString()));
     }
     return builder.build();
   }
