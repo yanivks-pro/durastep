@@ -25,6 +25,9 @@ All notable changes to Durastep are recorded here. The format follows
 - Database outages: engines pause with backoff from 1 to 30 seconds, log one warning when the database becomes
   unreachable and one message when it is back, and keep retrying to save activity results until their lease
   ends. A ten-second outage in the middle of a load loses nothing and repeats nothing.
+- Chaos test: 1,000 workflows on 3 engines, 100 random `kill -9` and about 10 freezes, with a report of
+  lost and duplicated work. It runs every night and on demand (`./mvnw verify -Pchaos`), not on every
+  pull request.
 
 ### Changed
 

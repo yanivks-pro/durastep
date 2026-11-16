@@ -30,6 +30,11 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <postgres.image>postgres:16-alpine</postgres.image>
+    <chaos.workflows>1000</chaos.workflows>
+    <chaos.instances>3</chaos.instances>
+    <chaos.kills>100</chaos.kills>
+    <chaos.excluded>**/*ChaosIT.java</chaos.excluded>
+    <chaos.included>**/*IT.java</chaos.included>
 
     <postgresql.version>42.7.14</postgresql.version>
     <flyway.version>13.12.0</flyway.version>
@@ -231,7 +236,16 @@
         <configuration>
           <systemPropertyVariables>
             <postgres.image>${postgres.image}</postgres.image>
+            <chaos.workflows>${chaos.workflows}</chaos.workflows>
+            <chaos.instances>${chaos.instances}</chaos.instances>
+            <chaos.kills>${chaos.kills}</chaos.kills>
           </systemPropertyVariables>
+          <excludes>
+            <exclude>${chaos.excluded}</exclude>
+          </excludes>
+          <includes>
+            <include>${chaos.included}</include>
+          </includes>
         </configuration>
         <executions>
           <execution>
@@ -351,4 +365,14 @@
       </plugin>
     </plugins>
   </build>
+  <profiles>
+    <profile>
+      <id>chaos</id>
+      <properties>
+        <chaos.excluded>**/none</chaos.excluded>
+        <chaos.included>**/*ChaosIT.java</chaos.included>
+        <jacoco.skip>true</jacoco.skip>
+      </properties>
+    </profile>
+  </profiles>
 </project>
