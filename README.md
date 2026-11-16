@@ -8,9 +8,9 @@ as intended.
 [![CI](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml/badge.svg)](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-> **v0.2: survives flaky APIs and sleeps for days.** Workflows retry failing steps, wait durably, and are
-> blocked instead of lost when the code has a bug. It is not ready for production yet: see
-> [Limits of v0.2](#limits-of-v02) and the [roadmap](#roadmap).
+> **v0.3: runs on many instances and survives chaos.** In a test that kills engines at random, nothing is lost and
+> nothing is done twice. It is not ready for production yet: see [Limits of v0.3](#limits-of-v03) and the
+> [roadmap](#roadmap).
 
 ```java
 public final class OrderWorkflow implements Workflow<Order, Receipt> {
@@ -31,14 +31,27 @@ public final class OrderWorkflow implements Workflow<Order, Receipt> {
 }
 ```
 
-**Proof:**
+**Proof:** a chaos test runs 1,000 workflows on 3 engine processes while killing one at random with `kill -9`
+100 times and freezing one 11 times. All 1,000 workflows complete with the right result, **0 are lost and 0
+effects happen twice**, and the database passes every invariant check. It runs every night on GitHub; the
+latest report is attached to each [nightly run](https://github.com/yanivks-pro/durastep/actions/workflows/nightly.yml).
+
+```
+completed 1,000 of 1,000 · lost 0 · duplicate effects 0 · kills 100 · freezes 11
+zombie results rejected 110 · repeats absorbed by idempotency keys 211 · invariant violations 0
+```
+
+Focused tests prove each guarantee on its own, on every commit:
 
 - A separate process is killed with `kill -9` in the middle of a workflow, and a second process resumes it:
   the card is charged once, and the interrupted step runs again with the same idempotency key.
 - A workflow sleeping through an engine shutdown is woken by the next engine.
 - A bug blocks a workflow with its stack trace saved; deploying the fix resumes it.
+- A worker frozen with `kill -STOP` loses its task; when it wakes up, its result is rejected by the fencing
+  check.
+- A ten-second database outage in the middle of a load loses nothing and repeats nothing.
 
-These tests run in CI on every commit, against Postgres 16 and the latest Postgres.
+These run in CI on every commit, against Postgres 16 and the latest Postgres.
 
 ## The problem
 
@@ -117,9 +130,9 @@ public String chargeCard(String orderId, long cents) {
 ```
 
 Durastep is not on Maven Central yet. Build it with `./mvnw install` and depend on
-`io.github.yanivks-pro:durastep-core:0.2.0`. The engine creates its tables in a `durastep` schema on start.
+`io.github.yanivks-pro:durastep-core:0.3.0`. The engine creates its tables in a `durastep` schema on start.
 
-## Features in v0.2
+## Features in v0.3
 
 - **Workflows as plain Java**, with activities declared as ordinary interfaces.
 - **Durable history and replay:** finished steps return their saved result and are never run again.
@@ -143,16 +156,24 @@ Durastep is not on Maven Central yet. Build it with `./mvnw install` and depend 
   the workflow running and blocked with the error saved, and it resumes once a fix is deployed.
 - **Results:** `result(timeout)` returns the value, throws `WorkflowFailedException`, or times out while the
   workflow carries on.
+- **Many engines, one decider per workflow:** each engine runs up to `workflowConcurrency` decisions and
+  `activityConcurrency` activities at once and never claims more than it has room for; a workflow is never
+  decided by two engines at the same time.
+- **Instant wake-ups:** Postgres notifications wake idle engines as soon as there is work; polling once a second
+  is the safety net.
+- **Heartbeats:** long activities call `ActivityContext.current().heartbeat()`; a crashed or frozen engine's
+  work is taken over after the heartbeat timeout, and a zombie learns it lost the task.
+- **Named queues:** `ActivityOptions.queue("gpu")` routes activities to the engines that serve that queue.
+- **Graceful shutdown and outages:** `stop()` lets work finish within a grace period and hands the rest to other
+  engines at once; a database outage pauses work with one warning and resumes it by itself.
 
-## Limits of v0.2
+## Limits of v0.3
 
-- **One worker loop per kind of work in each instance**, polling every 100 ms. Concurrency settings, `NOTIFY`
-  wake-ups and multi-instance proofs come in M3.
-- **No heartbeats yet.** An activity that crashes is taken over after its attempt limit plus one lease, so long
-  attempt limits mean slow recovery. Heartbeats come in M3.
 - **No signals, cancellation, sagas or parallel steps** (M4).
 - **No CLI, metrics or Spring Boot starter yet** (M5), so blocked workflows are visible only in the database,
   and there is no Maven Central release.
+- **Notifications do not pass through PgBouncer in transaction mode**; behind it, engines fall back to polling
+  once a second.
 
 ## Design highlights
 
@@ -179,6 +200,12 @@ Every significant decision is recorded as an [Architecture Decision Record](docs
   visible again later. [ADR-0015](docs/adr/0015-retries-as-delayed-tasks.md)
 - **BLOCKED, not FAILED, for bugs.** A bad deployment pauses workflows instead of failing them; a fix resumes
   them. [ADR-0016](docs/adr/0016-blocked-versus-failed.md)
+- **Postgres is the task queue.** `SKIP LOCKED` claims and notifications sent only on commit, with polling as the
+  safety net. [ADR-0017](docs/adr/0017-postgres-as-the-task-queue.md)
+- **Leases, fencing tokens and heartbeats.** Crashed work is taken over; late results from frozen workers are
+  rejected. [ADR-0018](docs/adr/0018-leases-fencing-and-heartbeats.md)
+- **One decider per workflow.** A unique index and leases keep each workflow sequential while many run in
+  parallel. [ADR-0019](docs/adr/0019-one-decider-per-workflow.md)
 - **The database guards the rules.** Constraints reject invalid states, such as a second decision task for the
   same workflow or a finished workflow without a finish time. [ADR-0007](docs/adr/0007-schema-migrations-with-flyway.md)
 
@@ -192,9 +219,9 @@ cd durastep
 ./mvnw verify
 ```
 
-`./mvnw verify` checks formatting, compiles with Error Prone, runs the unit, architecture, Postgres
-integration, crash, process-kill, retry, timer and blocked-workflow tests, and fails if line coverage drops
-below 85%.
+`./mvnw verify` checks formatting, compiles with Error Prone, runs the unit, architecture and Postgres
+integration tests, including the crash, process-kill, zombie and outage tests, and fails if line coverage drops
+below 85%. `./mvnw verify -Pchaos` runs the chaos test, which takes a few minutes.
 
 ## Roadmap
 
@@ -203,8 +230,8 @@ below 85%.
 | M0 Foundations | Build, CI, database schema, first design decisions | ✅ Done |
 | M1 Core idea (v0.1) | Kill it mid-workflow, restart, and it resumes exactly | ✅ Done |
 | M2 Reliability (v0.2) | Retries, timeouts and durable timers that can sleep for days | ✅ Done |
-| M3 Distributed (v0.3) | Many instances, leases and fencing; chaos test with 0 lost and 0 duplicates | 🚧 Next |
-| M4 Interaction (v0.4) | Signals, cancellation, sagas and parallel steps | ⏳ Planned |
+| M3 Distributed (v0.3) | Many instances, leases and fencing; chaos test with 0 lost and 0 duplicates | ✅ Done |
+| M4 Interaction (v0.4) | Signals, cancellation, sagas and parallel steps | 🚧 Next |
 | M5 Operability (v0.5) | CLI, metrics and Grafana, Spring Boot starter | ⏳ Planned |
 | M6 Safe evolution (v0.6) | Versioning, replay testing of new code, payload encryption | ⏳ Planned |
 | M7 Showcase (v1.0) | Dashboard, tracing, benchmarks, complete documentation | ⏳ Planned |
