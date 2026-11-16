@@ -16,6 +16,8 @@ All notable changes to Durastep are recorded here. The format follows
 - Cooperative cancellation: `client.cancel(id)`. The workflow receives a `CancelledException` at its next wait
   point, can clean up with ordinary activities, and ends CANCELLED; `result()` throws
   `WorkflowCancelledException`. Running activities are not interrupted, but their results are ignored.
+- Sagas: `ctx.saga()` with `addCompensation(...)` after each step and `compensate()` to undo them in reverse
+  order. Every undo step runs even if one fails, and the first failure is thrown at the end.
 
 ## [0.3.0] - 2026-11-16
 
