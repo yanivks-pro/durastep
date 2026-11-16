@@ -6,6 +6,8 @@ All notable changes to Durastep are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-15
+
 ### Added
 
 - Activity retries: `ctx.activities(Interface.class, ActivityOptions)` with a `RetryPolicy` (attempts,
