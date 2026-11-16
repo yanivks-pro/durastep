@@ -40,6 +40,7 @@ import javax.sql.DataSource;
 public final class JdbcWorkflowStore {
 
   public static final String DEFAULT_SCHEMA = "durastep";
+  public static final String DEFAULT_QUEUE = "default";
 
   private static final Pattern SCHEMA_NAME = Pattern.compile("[a-z_][a-z0-9_]{0,62}");
 
@@ -51,6 +52,7 @@ public final class JdbcWorkflowStore {
   private final String tasks;
   private final String inbox;
   private final String timers;
+  private final String channel;
 
   public JdbcWorkflowStore(DataSource dataSource) {
     this(dataSource, DEFAULT_SCHEMA);
@@ -72,6 +74,7 @@ public final class JdbcWorkflowStore {
     this.tasks = schema + ".tasks";
     this.inbox = schema + ".inbox";
     this.timers = schema + ".timers";
+    this.channel = schema;
   }
 
   public StartResult start(String workflowId, String type, Payload input) {
@@ -103,6 +106,7 @@ public final class JdbcWorkflowStore {
               connection,
               "INSERT INTO " + tasks + " (workflow_id, kind) VALUES (?, 'WORKFLOW')",
               workflowId);
+          notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
           if (timeout.isPresent()) {
             update(
                 connection,
@@ -248,6 +252,7 @@ public final class JdbcWorkflowStore {
                         + " (workflow_id, kind, activity_seq) VALUES (?, 'ACTIVITY', ?)",
                     task.workflowId(),
                     seq);
+                notifyWork(connection, TaskKind.ACTIVITY, DEFAULT_QUEUE);
               }
               case StartTimer timer -> {
                 appendEvent(
@@ -320,6 +325,7 @@ public final class JdbcWorkflowStore {
                     + " SET needs_rerun = false, attempt = 1, lease_owner = NULL, lease_until = NULL,"
                     + " visible_at = now() WHERE id = ?",
                 task.id());
+            notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
           } else {
             update(connection, "DELETE FROM " + tasks + " WHERE id = ?", task.id());
           }
@@ -495,6 +501,7 @@ public final class JdbcWorkflowStore {
             + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
             + " DO UPDATE SET needs_rerun = true",
         task.workflowId());
+    notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
   }
 
   public int fireDueTimers(int limit) {
@@ -538,6 +545,7 @@ public final class JdbcWorkflowStore {
                     + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
                     + " DO UPDATE SET needs_rerun = true",
                 workflowIds.get(i));
+            notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
           }
           return fired.size();
         });
@@ -634,6 +642,18 @@ public final class JdbcWorkflowStore {
         }
         return WorkflowState.valueOf(row.getString(1));
       }
+    }
+  }
+
+  public String notificationChannel() {
+    return channel;
+  }
+
+  private void notifyWork(Connection connection, TaskKind kind, String queue) throws SQLException {
+    try (PreparedStatement statement = connection.prepareStatement("SELECT pg_notify(?, ?)")) {
+      statement.setString(1, channel);
+      statement.setString(2, kind.name() + ":" + queue);
+      statement.execute();
     }
   }
 
