@@ -8,25 +8,37 @@ as intended.
 [![CI](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml/badge.svg)](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-> **v0.1: the core works and is crash-tested.** Workflows run, survive a killed process and resume exactly.
-> It is not ready for production yet: see [Limits of v0.1](#limits-of-v01) and the [roadmap](#roadmap).
+> **v0.2: survives flaky APIs and sleeps for days.** Workflows retry failing steps, wait durably, and are
+> blocked instead of lost when the code has a bug. It is not ready for production yet: see
+> [Limits of v0.2](#limits-of-v02) and the [roadmap](#roadmap).
 
 ```java
 public final class OrderWorkflow implements Workflow<Order, Receipt> {
   @Override
   public Receipt run(WorkflowContext ctx, Order order) {
-    OrderActivities shop = ctx.activities(OrderActivities.class);
-    String chargeId = shop.chargeCard(order.id(), order.cents());
+    OrderActivities shop = ctx.activities(OrderActivities.class, RETRY_FIVE_TIMES);
+    String chargeId;
+    try {
+      chargeId = shop.chargeCard(order.id(), order.cents());
+    } catch (ActivityFailedException declined) {
+      throw new WorkflowFailedException("payment failed: " + declined.failureMessage());
+    }
     shop.reserveStock(order.id());
-    shop.sendEmail(order.id());
+    ctx.sleep(Duration.ofDays(3));
+    shop.sendReviewRequest(order.id());
     return new Receipt(chargeId, ctx.now());
   }
 }
 ```
 
-**Proof:** a separate process is killed with `kill -9` in the middle of this workflow, and a second process
-resumes it: the card is charged once, and the interrupted step runs again with the same idempotency key. This
-test runs in CI on every commit, against Postgres 16 and the latest Postgres.
+**Proof:**
+
+- A separate process is killed with `kill -9` in the middle of a workflow, and a second process resumes it:
+  the card is charged once, and the interrupted step runs again with the same idempotency key.
+- A workflow sleeping through an engine shutdown is woken by the next engine.
+- A bug blocks a workflow with its stack trace saved; deploying the fix resumes it.
+
+These tests run in CI on every commit, against Postgres 16 and the latest Postgres.
 
 ## The problem
 
@@ -81,6 +93,21 @@ WorkflowHandle<Receipt> order = engine.client().start(OrderWorkflow.class, "orde
 Receipt receipt = order.result(Duration.ofSeconds(30));
 ```
 
+Give activities retries and time limits, and give a workflow a deadline:
+
+```java
+static final ActivityOptions RETRY_FIVE_TIMES = ActivityOptions.builder()
+    .attemptTimeout(Duration.ofSeconds(10))
+    .retryPolicy(RetryPolicy.builder()
+        .maxAttempts(5)
+        .initialBackoff(Duration.ofSeconds(1))
+        .nonRetryable(CardDeclinedException.class)
+        .build())
+    .build();
+
+client.start(OrderWorkflow.class, "order-42", input, WorkflowOptions.timeout(Duration.ofDays(7)));
+```
+
 Inside an activity, pass the idempotency key to the system you call, so a repeated call is ignored:
 
 ```java
@@ -90,9 +117,9 @@ public String chargeCard(String orderId, long cents) {
 ```
 
 Durastep is not on Maven Central yet. Build it with `./mvnw install` and depend on
-`io.github.yanivks-pro:durastep-core:0.1.0`. The engine creates its tables in a `durastep` schema on start.
+`io.github.yanivks-pro:durastep-core:0.2.0`. The engine creates its tables in a `durastep` schema on start.
 
-## Features in v0.1
+## Features in v0.2
 
 - **Workflows as plain Java**, with activities declared as ordinary interfaces.
 - **Durable history and replay:** finished steps return their saved result and are never run again.
@@ -104,18 +131,28 @@ Durastep is not on Maven Central yet. Build it with `./mvnw install` and depend 
   values on every replay.
 - **Mismatch detection:** if new code disagrees with a running workflow's history, Durastep stops instead of
   guessing.
+- **Retries:** a failing activity is retried with a backoff that doubles up to a cap, with jitter, and every
+  attempt uses the same idempotency key. Errors such as a declined card can be marked as not worth retrying.
+- **Timeouts:** a limit per attempt, an optional limit for all attempts together, and an optional deadline for
+  the whole workflow.
+- **Durable timers:** `ctx.sleep(Duration.ofDays(3))` survives restarts and wakes up about half a second after
+  it is due, on any engine.
+- **Failures that workflow code can handle:** an activity that fails for good throws `ActivityFailedException`,
+  which the workflow may catch; `WorkflowFailedException` fails the workflow on purpose.
+- **BLOCKED instead of lost:** a bug, a mismatch between code and history, or an unknown workflow type leaves
+  the workflow running and blocked with the error saved, and it resumes once a fix is deployed.
 - **Results:** `result(timeout)` returns the value, throws `WorkflowFailedException`, or times out while the
   workflow carries on.
 
-## Limits of v0.1
+## Limits of v0.2
 
-- **No retries or timers yet.** A failing activity fails the workflow. Retries, timeouts and durable timers
-  come in M2.
-- **One worker loop per instance**, polling every 100 ms. Concurrency settings, `NOTIFY` wake-ups and
-  multi-instance proofs come in M3.
-- **A workflow whose code no longer matches its history** is retried quietly after each lease instead of being
-  flagged as BLOCKED; that arrives in M2.
-- **No CLI, metrics or Spring Boot starter yet** (M5), and no Maven Central release.
+- **One worker loop per kind of work in each instance**, polling every 100 ms. Concurrency settings, `NOTIFY`
+  wake-ups and multi-instance proofs come in M3.
+- **No heartbeats yet.** An activity that crashes is taken over after its attempt limit plus one lease, so long
+  attempt limits mean slow recovery. Heartbeats come in M3.
+- **No signals, cancellation, sagas or parallel steps** (M4).
+- **No CLI, metrics or Spring Boot starter yet** (M5), so blocked workflows are visible only in the database,
+  and there is no Maven Central release.
 
 ## Design highlights
 
@@ -138,6 +175,10 @@ Every significant decision is recorded as an [Architecture Decision Record](docs
   keys make repeats harmless. [ADR-0010](docs/adr/0010-at-least-once-with-idempotency-keys.md)
 - **One writer to history.** A race found in design review was fixed with an inbox before any code existed.
   [ADR-0012](docs/adr/0012-single-writer-to-history.md)
+- **Retries are delayed tasks.** No retry scheduler and no extra table: a failed attempt is the same task, made
+  visible again later. [ADR-0015](docs/adr/0015-retries-as-delayed-tasks.md)
+- **BLOCKED, not FAILED, for bugs.** A bad deployment pauses workflows instead of failing them; a fix resumes
+  them. [ADR-0016](docs/adr/0016-blocked-versus-failed.md)
 - **The database guards the rules.** Constraints reject invalid states, such as a second decision task for the
   same workflow or a finished workflow without a finish time. [ADR-0007](docs/adr/0007-schema-migrations-with-flyway.md)
 
@@ -152,7 +193,8 @@ cd durastep
 ```
 
 `./mvnw verify` checks formatting, compiles with Error Prone, runs the unit, architecture, Postgres
-integration, crash and process-kill tests, and fails if line coverage drops below 85%.
+integration, crash, process-kill, retry, timer and blocked-workflow tests, and fails if line coverage drops
+below 85%.
 
 ## Roadmap
 
@@ -160,8 +202,8 @@ integration, crash and process-kill tests, and fails if line coverage drops belo
 |---|---|---|
 | M0 Foundations | Build, CI, database schema, first design decisions | ✅ Done |
 | M1 Core idea (v0.1) | Kill it mid-workflow, restart, and it resumes exactly | ✅ Done |
-| M2 Reliability (v0.2) | Retries, timeouts and durable timers that can sleep for days | 🚧 Next |
-| M3 Distributed (v0.3) | Many instances, leases and fencing; chaos test with 0 lost and 0 duplicates | ⏳ Planned |
+| M2 Reliability (v0.2) | Retries, timeouts and durable timers that can sleep for days | ✅ Done |
+| M3 Distributed (v0.3) | Many instances, leases and fencing; chaos test with 0 lost and 0 duplicates | 🚧 Next |
 | M4 Interaction (v0.4) | Signals, cancellation, sagas and parallel steps | ⏳ Planned |
 | M5 Operability (v0.5) | CLI, metrics and Grafana, Spring Boot starter | ⏳ Planned |
 | M6 Safe evolution (v0.6) | Versioning, replay testing of new code, payload encryption | ⏳ Planned |
