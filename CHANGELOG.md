@@ -6,6 +6,8 @@ All notable changes to Durastep are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-16
+
 ### Added
 
 - Concurrency: `workflowConcurrency` (default 10) and `activityConcurrency` (default 100) on the engine
