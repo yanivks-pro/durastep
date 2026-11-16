@@ -8,6 +8,7 @@ import io.github.yanivks_pro.durastep.runtime.WorkflowDefinition;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRegistry;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRuntime;
 import io.github.yanivks_pro.durastep.store.CrashPoints;
+import io.github.yanivks_pro.durastep.store.DatabaseHealth;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import io.github.yanivks_pro.durastep.store.NotificationListener;
 import io.github.yanivks_pro.durastep.worker.Worker;
@@ -42,7 +43,6 @@ public final class DurastepEngine implements AutoCloseable {
 
   private static final Duration SAFETY_POLL_INTERVAL = Duration.ofSeconds(1);
   private static final Duration RESULT_POLL_INTERVAL = Duration.ofMillis(100);
-  private static final Duration STOP_GRACE = Duration.ofSeconds(10);
 
   private final DataSource dataSource;
   private final String schema;
@@ -50,6 +50,8 @@ public final class DurastepEngine implements AutoCloseable {
   private final Worker worker;
   private final DurastepClient client;
   private final NotificationListener listener;
+  private final DatabaseHealth health = new DatabaseHealth();
+  private final Duration shutdownGrace;
 
   private DurastepEngine(Builder builder) {
     this.dataSource = Objects.requireNonNull(builder.dataSource, "a dataSource is required");
@@ -70,9 +72,12 @@ public final class DurastepEngine implements AutoCloseable {
                 builder.workflowConcurrency,
                 builder.activityConcurrency,
                 builder.activityQueues),
-            CrashPoints.NONE);
+            CrashPoints.NONE,
+            health);
     this.client = new StoreBackedClient(store, converter, RESULT_POLL_INTERVAL);
-    this.listener = new NotificationListener(dataSource, store.notificationChannel(), worker::wake);
+    this.listener =
+        new NotificationListener(dataSource, store.notificationChannel(), worker::wake, health);
+    this.shutdownGrace = builder.shutdownGrace;
   }
 
   /**
@@ -113,13 +118,15 @@ public final class DurastepEngine implements AutoCloseable {
   }
 
   /**
-   * Stops claiming new work and waits up to ten seconds for work in progress to finish. Work that
-   * does not finish is picked up again by any engine once its lease expires.
+   * Stops claiming new work and gives work in progress the shutdown grace period (30 seconds unless
+   * set with {@link Builder#shutdownGrace}) to finish. Work that does not finish in time is
+   * interrupted and its leases are released at once, so other engines take it over without waiting
+   * for the leases to expire.
    *
    * @throws InterruptedException if the calling thread is interrupted while waiting
    */
   public void stop() throws InterruptedException {
-    worker.stop(STOP_GRACE);
+    worker.stop(shutdownGrace);
     listener.stop();
   }
 
@@ -152,6 +159,7 @@ public final class DurastepEngine implements AutoCloseable {
     private int workflowConcurrency = 10;
     private int activityConcurrency = 100;
     private Set<String> activityQueues = Set.of(JdbcWorkflowStore.DEFAULT_QUEUE);
+    private Duration shutdownGrace = Duration.ofSeconds(30);
     private final WorkflowRegistry workflows = new WorkflowRegistry();
     private final ActivityRegistry activities = new ActivityRegistry();
 
@@ -289,6 +297,23 @@ public final class DurastepEngine implements AutoCloseable {
         names.add(ActivityOptions.requireQueueName(queue));
       }
       this.activityQueues = Set.copyOf(names);
+      return this;
+    }
+
+    /**
+     * Sets how long {@link DurastepEngine#stop()} waits for work in progress before releasing it to
+     * other engines. Defaults to 30 seconds.
+     *
+     * @param shutdownGrace zero or more
+     * @return this builder
+     * @throws IllegalArgumentException if {@code shutdownGrace} is negative
+     */
+    public Builder shutdownGrace(Duration shutdownGrace) {
+      if (shutdownGrace.isNegative()) {
+        throw new IllegalArgumentException(
+            "shutdownGrace cannot be negative, was " + shutdownGrace);
+      }
+      this.shutdownGrace = shutdownGrace;
       return this;
     }
 
