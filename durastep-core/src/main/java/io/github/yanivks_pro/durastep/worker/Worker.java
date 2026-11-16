@@ -22,8 +22,13 @@ import io.github.yanivks_pro.durastep.store.StaleTaskException;
 import io.github.yanivks_pro.durastep.store.TaskKind;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,37 +44,57 @@ public final class Worker {
 
   private static final Logger log = LoggerFactory.getLogger(Worker.class);
 
+  public record Settings(
+      String owner,
+      Duration lease,
+      Duration pollInterval,
+      int workflowConcurrency,
+      int activityConcurrency) {
+
+    public Settings {
+      if (workflowConcurrency < 1 || activityConcurrency < 1) {
+        throw new IllegalArgumentException(
+            "concurrency must be at least 1, was "
+                + workflowConcurrency
+                + " for workflows and "
+                + activityConcurrency
+                + " for activities");
+      }
+    }
+  }
+
   private final JdbcWorkflowStore store;
   private final WorkflowRegistry workflows;
   private final WorkflowRuntime workflowRuntime;
   private final ActivityRuntime activityRuntime;
+  private final Settings settings;
   private final String owner;
   private final Duration lease;
-  private final Duration pollInterval;
   private final CrashPoints crashPoints;
+  private final Semaphore workflowPermits;
+  private final Semaphore activityPermits;
+  private final Set<Thread> inFlight = ConcurrentHashMap.newKeySet();
 
   private volatile boolean running;
-  private Thread decider;
-  private Thread activityRunner;
-  private Thread timerFirer;
+  private List<Thread> pollers = List.of();
 
   public Worker(
       JdbcWorkflowStore store,
       WorkflowRegistry workflows,
       WorkflowRuntime workflowRuntime,
       ActivityRuntime activityRuntime,
-      String owner,
-      Duration lease,
-      Duration pollInterval,
+      Settings settings,
       CrashPoints crashPoints) {
     this.store = store;
     this.workflows = workflows;
     this.workflowRuntime = workflowRuntime;
     this.activityRuntime = activityRuntime;
-    this.owner = owner;
-    this.lease = lease;
-    this.pollInterval = pollInterval;
+    this.settings = settings;
+    this.owner = settings.owner();
+    this.lease = settings.lease();
     this.crashPoints = crashPoints;
+    this.workflowPermits = new Semaphore(settings.workflowConcurrency());
+    this.activityPermits = new Semaphore(settings.activityConcurrency());
   }
 
   public synchronized void start() {
@@ -77,11 +102,20 @@ public final class Worker {
       throw new IllegalStateException("worker " + owner + " is already running");
     }
     running = true;
-    decider = Thread.ofVirtual().name(owner + "-decider").start(() -> loop(TaskKind.WORKFLOW));
-    activityRunner =
-        Thread.ofVirtual().name(owner + "-activities").start(() -> loop(TaskKind.ACTIVITY));
-    timerFirer = Thread.ofVirtual().name(owner + "-timers").start(this::fireTimers);
-    log.info("worker {} started", owner);
+    pollers =
+        List.of(
+            Thread.ofVirtual()
+                .name(owner + "-decisions")
+                .start(() -> poll(TaskKind.WORKFLOW, workflowPermits)),
+            Thread.ofVirtual()
+                .name(owner + "-activities")
+                .start(() -> poll(TaskKind.ACTIVITY, activityPermits)),
+            Thread.ofVirtual().name(owner + "-timers").start(this::fireTimers));
+    log.info(
+        "worker {} started with {} decision and {} activity slots",
+        owner,
+        settings.workflowConcurrency(),
+        settings.activityConcurrency());
   }
 
   public synchronized void stop(Duration grace) throws InterruptedException {
@@ -89,10 +123,18 @@ public final class Worker {
       return;
     }
     running = false;
-    for (Thread thread : List.of(decider, activityRunner, timerFirer)) {
-      if (!thread.join(grace)) {
-        thread.interrupt();
-        thread.join();
+    Duration pollerExit = settings.pollInterval().plus(TIMER_CHECK_INTERVAL).multipliedBy(2);
+    for (Thread poller : pollers) {
+      if (!poller.join(pollerExit)) {
+        poller.interrupt();
+        poller.join();
+      }
+    }
+    long deadline = System.nanoTime() + grace.toNanos();
+    for (Thread task : Set.copyOf(inFlight)) {
+      long remaining = deadline - System.nanoTime();
+      if (remaining <= 0 || !task.join(Duration.ofNanos(remaining))) {
+        task.interrupt();
       }
     }
     log.info("worker {} stopped", owner);
@@ -102,26 +144,72 @@ public final class Worker {
     return owner;
   }
 
-  private void loop(TaskKind kind) {
+  private void poll(TaskKind kind, Semaphore permits) {
     while (running) {
+      int granted = 0;
       try {
-        boolean worked = kind == TaskKind.WORKFLOW ? decideOnce() : runActivityOnce();
-        if (!worked) {
-          Thread.sleep(pollInterval);
+        if (!permits.tryAcquire(settings.pollInterval().toNanos(), TimeUnit.NANOSECONDS)) {
+          continue;
+        }
+        granted = 1 + permits.drainPermits();
+        List<ClaimedTask> claimed = store.claim(kind, DEFAULT_QUEUE, owner, lease, granted);
+        permits.release(granted - claimed.size());
+        granted = 0;
+        for (ClaimedTask task : claimed) {
+          startTask(kind, task, permits);
+        }
+        if (claimed.isEmpty()) {
+          Thread.sleep(settings.pollInterval());
         }
       } catch (InterruptedException e) {
+        permits.release(granted);
         Thread.currentThread().interrupt();
         return;
       } catch (RuntimeException e) {
-        log.error("worker {} hit an unexpected error while processing {} tasks", owner, kind, e);
+        permits.release(granted);
+        if (!running) {
+          return;
+        }
+        log.error("worker {} could not claim {} tasks", owner, kind, e);
         try {
-          Thread.sleep(pollInterval);
+          Thread.sleep(settings.pollInterval());
         } catch (InterruptedException interrupted) {
           Thread.currentThread().interrupt();
           return;
         }
       }
     }
+  }
+
+  private void startTask(TaskKind kind, ClaimedTask task, Semaphore permits) {
+    Thread thread =
+        Thread.ofVirtual()
+            .name(owner + "-" + kind.name().toLowerCase(Locale.ROOT) + "-" + task.id())
+            .unstarted(
+                () -> {
+                  try {
+                    if (kind == TaskKind.WORKFLOW) {
+                      decide(task);
+                    } else {
+                      runActivity(task);
+                    }
+                  } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                  } catch (RuntimeException e) {
+                    log.error(
+                        "worker {} hit an unexpected error on {} task {} of workflow {}",
+                        owner,
+                        kind,
+                        task.id(),
+                        task.workflowId(),
+                        e);
+                  } finally {
+                    inFlight.remove(Thread.currentThread());
+                    permits.release();
+                  }
+                });
+    inFlight.add(thread);
+    thread.start();
   }
 
   private void fireTimers() {
@@ -134,6 +222,9 @@ public final class Worker {
         Thread.currentThread().interrupt();
         return;
       } catch (RuntimeException e) {
+        if (!running) {
+          return;
+        }
         log.error("worker {} hit an unexpected error while firing timers", owner, e);
         try {
           Thread.sleep(TIMER_CHECK_INTERVAL);
@@ -145,12 +236,7 @@ public final class Worker {
     }
   }
 
-  private boolean decideOnce() {
-    Optional<ClaimedTask> claimed = store.claim(TaskKind.WORKFLOW, DEFAULT_QUEUE, owner, lease);
-    if (claimed.isEmpty()) {
-      return false;
-    }
-    ClaimedTask task = claimed.get();
+  private void decide(ClaimedTask task) {
     try {
       DecisionInput input = store.loadDecision(task);
       Optional<WorkflowDefinition<?, ?>> definition = workflows.find(input.workflowType());
@@ -159,7 +245,7 @@ public final class Worker {
             task,
             new IllegalStateException(
                 "workflow type " + input.workflowType() + " is not registered with this engine"));
-        return true;
+        return;
       }
       List<Command> commands =
           workflowRuntime.decide(definition.get(), task.workflowId(), input.historyWithInbox());
@@ -171,7 +257,6 @@ public final class Worker {
     } catch (StaleTaskException e) {
       log.warn("discarded a decision for workflow {}: {}", task.workflowId(), e.getMessage());
     }
-    return true;
   }
 
   private void block(ClaimedTask task, Throwable error) {
@@ -200,12 +285,7 @@ public final class Worker {
     }
   }
 
-  private boolean runActivityOnce() throws InterruptedException {
-    Optional<ClaimedTask> claimed = store.claim(TaskKind.ACTIVITY, DEFAULT_QUEUE, owner, lease);
-    if (claimed.isEmpty()) {
-      return false;
-    }
-    ClaimedTask task = claimed.get();
+  private void runActivity(ClaimedTask task) throws InterruptedException {
     ActivityToRun activity = store.loadActivity(task);
     ActivityOptions options = activity.options();
     try {
@@ -244,6 +324,5 @@ public final class Worker {
           task.workflowId(),
           e.getMessage());
     }
-    return true;
   }
 }

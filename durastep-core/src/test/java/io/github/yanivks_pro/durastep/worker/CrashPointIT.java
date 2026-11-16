@@ -259,9 +259,7 @@ class CrashPointIT {
             workflows,
             new WorkflowRuntime(json),
             new ActivityRuntime(activities, json),
-            owner,
-            LEASE,
-            POLL,
+            new Worker.Settings(owner, LEASE, POLL, 4, 4),
             crashPoints);
     worker.start();
     workers.add(worker);
