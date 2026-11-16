@@ -20,3 +20,4 @@ for the rules, and [the template](0000-template.md) for the format.
 | [0013](0013-database-clock-only.md) | The database clock is the only clock | Accepted |
 | [0014](0014-jsonb-payloads-and-event-codec.md) | JSONB payloads and an explicit event codec | Accepted |
 | [0015](0015-retries-as-delayed-tasks.md) | Retries are delayed tasks | Accepted |
+| [0016](0016-blocked-versus-failed.md) | BLOCKED versus FAILED | Accepted |

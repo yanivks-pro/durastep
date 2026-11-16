@@ -1,7 +1,19 @@
 package io.github.yanivks_pro.durastep.api;
 
 /**
- * Thrown by {@link WorkflowHandle#result} when the workflow ended in {@link WorkflowState#FAILED}.
+ * A workflow that ended in {@link WorkflowState#FAILED}.
+ *
+ * <p>Workflow code throws it to fail on purpose, for a business reason:
+ *
+ * <pre>{@code
+ * if (!stock.available()) {
+ *   throw new WorkflowFailedException("out of stock");
+ * }
+ * }</pre>
+ *
+ * <p>{@link WorkflowHandle#result} throws it when the workflow has failed, for any reason. Other
+ * unexpected exceptions in workflow code do not fail the workflow: they leave it running and
+ * blocked until the code is fixed.
  */
 public final class WorkflowFailedException extends RuntimeException {
 
@@ -11,7 +23,18 @@ public final class WorkflowFailedException extends RuntimeException {
   private final String failureType;
 
   /**
-   * Creates the exception.
+   * Creates the exception that workflow code throws to fail on purpose.
+   *
+   * @param message why the workflow failed
+   */
+  public WorkflowFailedException(String message) {
+    super(message);
+    this.workflowId = null;
+    this.failureType = WorkflowFailedException.class.getName();
+  }
+
+  /**
+   * Creates the exception that {@link WorkflowHandle#result} throws for a failed workflow.
    *
    * @param workflowId the ID of the failed workflow
    * @param failureType the class name of the error that failed the workflow
@@ -26,7 +49,7 @@ public final class WorkflowFailedException extends RuntimeException {
   /**
    * Returns the ID of the failed workflow.
    *
-   * @return the workflow ID
+   * @return the workflow ID, or {@code null} when thrown by workflow code
    */
   public String workflowId() {
     return workflowId;

@@ -7,6 +7,7 @@ import io.github.yanivks_pro.durastep.api.ActivityFailedException;
 import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.RetryPolicy;
+import io.github.yanivks_pro.durastep.api.WorkflowFailedException;
 import io.github.yanivks_pro.durastep.api.WorkflowTimeoutException;
 import io.github.yanivks_pro.durastep.payload.JsonPayloadConverter;
 import io.github.yanivks_pro.durastep.payload.Payload;
@@ -237,7 +238,7 @@ class WorkflowRuntimeTest {
   }
 
   @Test
-  void catchingThrowableInWorkflowCodeFailsTheWorkflowWithAClearMessage() {
+  void catchingThrowableInWorkflowCodeBlocksTheWorkflowWithAClearMessage() {
     WorkflowDefinition<Order, String> swallowsEverything =
         new WorkflowDefinition<>(
             "SwallowsEverything",
@@ -252,28 +253,50 @@ class WorkflowRuntimeTest {
                   }
                 });
 
-    assertThat(runtime.decide(swallowsEverything, "order-42", History.startedWith(ORDER).entries()))
-        .containsExactly(
-            new FailWorkflow(
-                new Failure(
-                    IllegalStateException.class.getName(), WorkflowRuntime.CAUGHT_SUSPENSION)));
+    assertThatThrownBy(
+            () ->
+                runtime.decide(
+                    swallowsEverything, "order-42", History.startedWith(ORDER).entries()))
+        .isInstanceOf(WorkflowBlockedException.class)
+        .hasRootCauseInstanceOf(IllegalStateException.class)
+        .rootCause()
+        .hasMessage(WorkflowRuntime.CAUGHT_SUSPENSION);
   }
 
   @Test
-  void anExceptionInWorkflowCodeFailsTheWorkflow() {
+  void anUnexpectedExceptionInWorkflowCodeBlocksTheWorkflowInsteadOfFailingIt() {
     WorkflowDefinition<Order, String> broken =
         new WorkflowDefinition<>(
             "Broken",
             Order.class,
             () ->
                 (ctx, order) -> {
-                  throw new IllegalArgumentException("no such product");
+                  throw new NullPointerException("customer is null");
                 });
 
-    assertThat(runtime.decide(broken, "order-42", History.startedWith(ORDER).entries()))
+    assertThatThrownBy(
+            () -> runtime.decide(broken, "order-42", History.startedWith(ORDER).entries()))
+        .isInstanceOf(WorkflowBlockedException.class)
+        .hasMessageContaining("workflow order-42 is blocked")
+        .cause()
+        .isInstanceOf(NullPointerException.class)
+        .hasMessage("customer is null");
+  }
+
+  @Test
+  void aWorkflowFailedExceptionFailsTheWorkflowOnPurpose() {
+    WorkflowDefinition<Order, String> refuses =
+        new WorkflowDefinition<>(
+            "Refuses",
+            Order.class,
+            () ->
+                (ctx, order) -> {
+                  throw new WorkflowFailedException("out of stock");
+                });
+
+    assertThat(runtime.decide(refuses, "order-42", History.startedWith(ORDER).entries()))
         .containsExactly(
-            new FailWorkflow(
-                new Failure(IllegalArgumentException.class.getName(), "no such product")));
+            new FailWorkflow(new Failure(WorkflowFailedException.class.getName(), "out of stock")));
   }
 
   @Test
@@ -355,7 +378,7 @@ class WorkflowRuntimeTest {
   }
 
   @Test
-  void aNegativeSleepIsAMistakeInTheWorkflowCode() {
+  void aNegativeSleepIsAMistakeInTheWorkflowCodeAndBlocksIt() {
     WorkflowDefinition<Order, String> negative =
         new WorkflowDefinition<>(
             "Negative",
@@ -366,11 +389,11 @@ class WorkflowRuntimeTest {
                   return "never";
                 });
 
-    assertThat(runtime.decide(negative, "order-42", History.startedWith(ORDER).entries()))
-        .singleElement()
-        .isInstanceOfSatisfying(
-            FailWorkflow.class,
-            fail -> assertThat(fail.failure().message()).contains("negative duration"));
+    assertThatThrownBy(
+            () -> runtime.decide(negative, "order-42", History.startedWith(ORDER).entries()))
+        .isInstanceOf(WorkflowBlockedException.class)
+        .cause()
+        .hasMessageContaining("negative duration");
   }
 
   @Test

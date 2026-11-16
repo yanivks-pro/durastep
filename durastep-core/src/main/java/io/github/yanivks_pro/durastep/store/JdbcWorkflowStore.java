@@ -263,7 +263,8 @@ public final class JdbcWorkflowStore {
                     connection,
                     "UPDATE "
                         + workflows
-                        + " SET state = 'COMPLETED', result = CAST(? AS jsonb), closed_at = now()"
+                        + " SET state = 'COMPLETED', blocked = false, blocked_error = NULL,"
+                        + " result = CAST(? AS jsonb), closed_at = now()"
                         + " WHERE id = ?",
                     complete.result().json(),
                     task.workflowId());
@@ -276,7 +277,8 @@ public final class JdbcWorkflowStore {
                     connection,
                     "UPDATE "
                         + workflows
-                        + " SET state = 'FAILED', failure = CAST(? AS jsonb), closed_at = now()"
+                        + " SET state = 'FAILED', blocked = false, blocked_error = NULL,"
+                        + " failure = CAST(? AS jsonb), closed_at = now()"
                         + " WHERE id = ?",
                     codec.failureJson(fail.failure()),
                     task.workflowId());
@@ -287,7 +289,10 @@ public final class JdbcWorkflowStore {
           crashPoints.reached(CrashPoint.MID_DECISION_COMMIT);
           update(
               connection,
-              "UPDATE " + workflows + " SET history_length = ?, updated_at = now() WHERE id = ?",
+              "UPDATE "
+                  + workflows
+                  + " SET history_length = ?, updated_at = now(), blocked = false, blocked_error = NULL"
+                  + " WHERE id = ?",
               seq,
               task.workflowId());
           if (finished) {
@@ -302,12 +307,38 @@ public final class JdbcWorkflowStore {
                 connection,
                 "UPDATE "
                     + tasks
-                    + " SET needs_rerun = false, lease_owner = NULL, lease_until = NULL,"
+                    + " SET needs_rerun = false, attempt = 1, lease_owner = NULL, lease_until = NULL,"
                     + " visible_at = now() WHERE id = ?",
                 task.id());
           } else {
             update(connection, "DELETE FROM " + tasks + " WHERE id = ?", task.id());
           }
+          return null;
+        });
+  }
+
+  public void blockDecision(ClaimedTask task, Throwable error, Duration retryAfter) {
+    transactions.inTransaction(
+        "block workflow " + task.workflowId(),
+        connection -> {
+          fence(connection, task);
+          update(
+              connection,
+              "UPDATE "
+                  + workflows
+                  + " SET blocked = true, blocked_error = CAST(? AS jsonb), updated_at = now()"
+                  + " WHERE id = ? AND state = 'RUNNING'",
+              codec.errorJson(error),
+              task.workflowId());
+          update(
+              connection,
+              "UPDATE "
+                  + tasks
+                  + " SET attempt = attempt + 1, needs_rerun = false,"
+                  + " visible_at = now() + ? * interval '1 millisecond',"
+                  + " lease_owner = NULL, lease_until = NULL WHERE id = ?",
+              retryAfter.toMillis(),
+              task.id());
           return null;
         });
   }

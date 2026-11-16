@@ -6,7 +6,9 @@ import io.github.yanivks_pro.durastep.activity.ActivityRuntime;
 import io.github.yanivks_pro.durastep.activity.Backoff;
 import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
+import io.github.yanivks_pro.durastep.api.RetryPolicy;
 import io.github.yanivks_pro.durastep.runtime.Command;
+import io.github.yanivks_pro.durastep.runtime.WorkflowBlockedException;
 import io.github.yanivks_pro.durastep.runtime.WorkflowDefinition;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRegistry;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRuntime;
@@ -31,6 +33,9 @@ public final class Worker {
   public static final Duration TIMER_CHECK_INTERVAL = Duration.ofMillis(500);
 
   private static final int TIMERS_PER_BATCH = 100;
+
+  static final RetryPolicy BLOCKED_RETRIES =
+      new RetryPolicy(Integer.MAX_VALUE, Duration.ofSeconds(1), Duration.ofMinutes(5), List.of());
 
   private static final Logger log = LoggerFactory.getLogger(Worker.class);
 
@@ -150,26 +155,49 @@ public final class Worker {
       DecisionInput input = store.loadDecision(task);
       Optional<WorkflowDefinition<?, ?>> definition = workflows.find(input.workflowType());
       if (definition.isEmpty()) {
-        log.error(
-            "workflow {} has type {}, which is not registered with this engine;"
-                + " it will be retried when its lease expires",
-            task.workflowId(),
-            input.workflowType());
+        block(
+            task,
+            new IllegalStateException(
+                "workflow type " + input.workflowType() + " is not registered with this engine"));
         return true;
       }
       List<Command> commands =
           workflowRuntime.decide(definition.get(), task.workflowId(), input.historyWithInbox());
       store.commitDecision(task, input, commands);
     } catch (NonDeterminismException e) {
-      log.error(
-          "workflow {} no longer matches its history and was not changed;"
-              + " it will be retried when its lease expires",
-          task.workflowId(),
-          e);
+      block(task, e);
+    } catch (WorkflowBlockedException e) {
+      block(task, e.getCause());
     } catch (StaleTaskException e) {
       log.warn("discarded a decision for workflow {}: {}", task.workflowId(), e.getMessage());
     }
     return true;
+  }
+
+  private void block(ClaimedTask task, Throwable error) {
+    Duration retryAfter =
+        Backoff.delayAfter(BLOCKED_RETRIES, task.attempt(), ThreadLocalRandom.current());
+    try {
+      store.blockDecision(task, error, retryAfter);
+    } catch (StaleTaskException e) {
+      log.warn(
+          "discarded a blocked decision for workflow {}: {}", task.workflowId(), e.getMessage());
+      return;
+    }
+    if (task.attempt() == 1) {
+      log.error(
+          "workflow {} is BLOCKED and will be retried in {} until the cause is fixed",
+          task.workflowId(),
+          retryAfter,
+          error);
+    } else {
+      log.warn(
+          "workflow {} is still BLOCKED after {} attempts ({}); retrying in {}",
+          task.workflowId(),
+          task.attempt(),
+          error.toString(),
+          retryAfter);
+    }
   }
 
   private boolean runActivityOnce() throws InterruptedException {
