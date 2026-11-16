@@ -9,6 +9,7 @@ import io.github.yanivks_pro.durastep.runtime.WorkflowRegistry;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRuntime;
 import io.github.yanivks_pro.durastep.store.CrashPoints;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
+import io.github.yanivks_pro.durastep.store.NotificationListener;
 import io.github.yanivks_pro.durastep.worker.Worker;
 import java.time.Duration;
 import java.util.HexFormat;
@@ -37,7 +38,8 @@ import org.flywaydb.core.Flyway;
  */
 public final class DurastepEngine implements AutoCloseable {
 
-  private static final Duration POLL_INTERVAL = Duration.ofMillis(100);
+  private static final Duration SAFETY_POLL_INTERVAL = Duration.ofSeconds(1);
+  private static final Duration RESULT_POLL_INTERVAL = Duration.ofMillis(100);
   private static final Duration STOP_GRACE = Duration.ofSeconds(10);
 
   private final DataSource dataSource;
@@ -45,6 +47,7 @@ public final class DurastepEngine implements AutoCloseable {
   private final boolean applyMigrations;
   private final Worker worker;
   private final DurastepClient client;
+  private final NotificationListener listener;
 
   private DurastepEngine(Builder builder) {
     this.dataSource = Objects.requireNonNull(builder.dataSource, "a dataSource is required");
@@ -61,11 +64,12 @@ public final class DurastepEngine implements AutoCloseable {
             new Worker.Settings(
                 newOwnerName(),
                 builder.leaseDuration,
-                POLL_INTERVAL,
+                SAFETY_POLL_INTERVAL,
                 builder.workflowConcurrency,
                 builder.activityConcurrency),
             CrashPoints.NONE);
-    this.client = new StoreBackedClient(store, converter, POLL_INTERVAL);
+    this.client = new StoreBackedClient(store, converter, RESULT_POLL_INTERVAL);
+    this.listener = new NotificationListener(dataSource, store.notificationChannel(), worker::wake);
   }
 
   /**
@@ -92,6 +96,7 @@ public final class DurastepEngine implements AutoCloseable {
           .load()
           .migrate();
     }
+    listener.start();
     worker.start();
   }
 
@@ -112,6 +117,7 @@ public final class DurastepEngine implements AutoCloseable {
    */
   public void stop() throws InterruptedException {
     worker.stop(STOP_GRACE);
+    listener.stop();
   }
 
   /**

@@ -11,6 +11,13 @@ All notable changes to Durastep are recorded here. The format follows
 - Concurrency: `workflowConcurrency` (default 10) and `activityConcurrency` (default 100) on the engine
   builder. Each engine claims at most as many tasks as it has free slots, in one batch, and runs each on its
   own virtual thread.
+- Instant wake-ups: every commit that creates work sends a Postgres notification, and each engine listens on
+  one connection, so idle engines start new work at once. The connection reconnects by itself if it breaks.
+
+### Changed
+
+- Engines look for work every second when nothing wakes them, instead of every 100 ms, and hold one extra
+  connection for notifications. The Postgres driver is now a compile-time dependency.
 
 ## [0.2.0] - 2026-11-15
 

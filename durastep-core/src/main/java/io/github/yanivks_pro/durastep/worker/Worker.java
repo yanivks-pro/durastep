@@ -34,7 +34,7 @@ import org.slf4j.LoggerFactory;
 
 public final class Worker {
 
-  public static final String DEFAULT_QUEUE = "default";
+  public static final String DEFAULT_QUEUE = JdbcWorkflowStore.DEFAULT_QUEUE;
   public static final Duration TIMER_CHECK_INTERVAL = Duration.ofMillis(500);
 
   private static final int TIMERS_PER_BATCH = 100;
@@ -73,6 +73,8 @@ public final class Worker {
   private final CrashPoints crashPoints;
   private final Semaphore workflowPermits;
   private final Semaphore activityPermits;
+  private final Semaphore workflowWakeups = new Semaphore(0);
+  private final Semaphore activityWakeups = new Semaphore(0);
   private final Set<Thread> inFlight = ConcurrentHashMap.newKeySet();
 
   private volatile boolean running;
@@ -106,10 +108,10 @@ public final class Worker {
         List.of(
             Thread.ofVirtual()
                 .name(owner + "-decisions")
-                .start(() -> poll(TaskKind.WORKFLOW, workflowPermits)),
+                .start(() -> poll(TaskKind.WORKFLOW, workflowPermits, workflowWakeups)),
             Thread.ofVirtual()
                 .name(owner + "-activities")
-                .start(() -> poll(TaskKind.ACTIVITY, activityPermits)),
+                .start(() -> poll(TaskKind.ACTIVITY, activityPermits, activityWakeups)),
             Thread.ofVirtual().name(owner + "-timers").start(this::fireTimers));
     log.info(
         "worker {} started with {} decision and {} activity slots",
@@ -123,6 +125,8 @@ public final class Worker {
       return;
     }
     running = false;
+    wake(TaskKind.WORKFLOW);
+    wake(TaskKind.ACTIVITY);
     Duration pollerExit = settings.pollInterval().plus(TIMER_CHECK_INTERVAL).multipliedBy(2);
     for (Thread poller : pollers) {
       if (!poller.join(pollerExit)) {
@@ -144,7 +148,14 @@ public final class Worker {
     return owner;
   }
 
-  private void poll(TaskKind kind, Semaphore permits) {
+  public void wake(TaskKind kind) {
+    Semaphore wakeups = kind == TaskKind.WORKFLOW ? workflowWakeups : activityWakeups;
+    if (wakeups.availablePermits() == 0) {
+      wakeups.release();
+    }
+  }
+
+  private void poll(TaskKind kind, Semaphore permits, Semaphore wakeups) {
     while (running) {
       int granted = 0;
       try {
@@ -152,6 +163,7 @@ public final class Worker {
           continue;
         }
         granted = 1 + permits.drainPermits();
+        wakeups.drainPermits();
         List<ClaimedTask> claimed = store.claim(kind, DEFAULT_QUEUE, owner, lease, granted);
         permits.release(granted - claimed.size());
         granted = 0;
@@ -159,7 +171,7 @@ public final class Worker {
           startTask(kind, task, permits);
         }
         if (claimed.isEmpty()) {
-          Thread.sleep(settings.pollInterval());
+          waitForWork(wakeups);
         }
       } catch (InterruptedException e) {
         permits.release(granted);
@@ -178,6 +190,12 @@ public final class Worker {
           return;
         }
       }
+    }
+  }
+
+  private void waitForWork(Semaphore wakeups) throws InterruptedException {
+    if (wakeups.tryAcquire(settings.pollInterval().toNanos(), TimeUnit.NANOSECONDS)) {
+      log.trace("worker {} was woken by a notification", owner);
     }
   }
 
