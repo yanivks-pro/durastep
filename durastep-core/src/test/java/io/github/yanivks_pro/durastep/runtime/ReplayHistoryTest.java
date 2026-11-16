@@ -1,5 +1,6 @@
 package io.github.yanivks_pro.durastep.runtime;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.yanivks_pro.durastep.payload.Payload;
@@ -52,6 +53,16 @@ class ReplayHistoryTest {
     assertThatThrownBy(() -> ReplayHistory.of(history.entries()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("first event");
+  }
+
+  @Test
+  void theWorkflowDeadlineIsATimerWithoutAStep() {
+    History history = History.startedWith("x").timerFired(WorkflowRuntime.DEADLINE_TIMER_SEQ);
+
+    ReplayHistory replay = ReplayHistory.of(history.entries());
+
+    assertThat(replay.deadlinePassed()).isTrue();
+    assertThat(replay.steps()).isEmpty();
   }
 
   @Test

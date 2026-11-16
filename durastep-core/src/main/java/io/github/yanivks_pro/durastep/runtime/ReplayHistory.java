@@ -14,7 +14,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-record ReplayHistory(WorkflowStarted started, Instant startedAt, List<Step> steps) {
+record ReplayHistory(
+    WorkflowStarted started, Instant startedAt, List<Step> steps, boolean deadlinePassed) {
 
   static final String SLEEP = "sleep";
 
@@ -36,6 +37,7 @@ record ReplayHistory(WorkflowStarted started, Instant startedAt, List<Step> step
     Map<Integer, HistoryEntry> stepsBySeq = new HashMap<>();
     Map<Integer, HistoryEntry> outcomeBySeq = new HashMap<>();
     List<HistoryEntry> stepsInOrder = new ArrayList<>();
+    boolean deadlinePassed = false;
     for (int i = 0; i < history.size(); i++) {
       HistoryEntry entry = history.get(i);
       boolean first = i == 0;
@@ -64,6 +66,8 @@ record ReplayHistory(WorkflowStarted started, Instant startedAt, List<Step> step
         case ActivityFailed failed ->
             recordOutcome(
                 entry, failed.scheduledSeq(), ActivityScheduled.class, stepsBySeq, outcomeBySeq);
+        case TimerFired fired when fired.startedSeq() == WorkflowRuntime.DEADLINE_TIMER_SEQ ->
+            deadlinePassed = true;
         case TimerFired fired ->
             recordOutcome(entry, fired.startedSeq(), TimerStarted.class, stepsBySeq, outcomeBySeq);
         case WorkflowCompleted ignored ->
@@ -74,7 +78,7 @@ record ReplayHistory(WorkflowStarted started, Instant startedAt, List<Step> step
     }
     List<Step> steps =
         stepsInOrder.stream().map(step -> new Step(step, outcomeBySeq.get(step.seq()))).toList();
-    return new ReplayHistory(started, history.getFirst().recordedAt(), steps);
+    return new ReplayHistory(started, history.getFirst().recordedAt(), steps, deadlinePassed);
   }
 
   static String nameOf(HistoryEntry step) {

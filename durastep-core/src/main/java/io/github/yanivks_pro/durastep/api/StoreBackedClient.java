@@ -24,10 +24,21 @@ final class StoreBackedClient implements DurastepClient {
   @Override
   public <I, O> WorkflowHandle<O> start(
       Class<? extends Workflow<I, O>> workflowClass, String workflowId, I input) {
+    return start(workflowClass, workflowId, input, WorkflowOptions.DEFAULT);
+  }
+
+  @Override
+  public <I, O> WorkflowHandle<O> start(
+      Class<? extends Workflow<I, O>> workflowClass,
+      String workflowId,
+      I input,
+      WorkflowOptions options) {
     Objects.requireNonNull(workflowClass, "workflowClass");
+    Objects.requireNonNull(options, "options");
     requireValidId(workflowId);
     String type = WorkflowTypes.nameOf(workflowClass);
-    StartResult started = store.start(workflowId, type, converter.toPayload(input));
+    StartResult started =
+        store.start(workflowId, type, converter.toPayload(input), options.timeout());
     if (!started.type().equals(type)) {
       throw new IllegalArgumentException(
           "workflow " + workflowId + " already exists as " + started.type() + ", not " + type);

@@ -16,6 +16,9 @@ All notable changes to Durastep are recorded here. The format follows
 - `ActivityTimeoutException` for attempts that run longer than their limit.
 - Durable timers: `ctx.sleep(Duration)` stores its wake-up time in Postgres, survives restarts, may last days, and is
   fired by any engine about half a second after it is due.
+- Workflow deadlines: `client.start(..., WorkflowOptions.timeout(duration))`. A workflow still running at its
+  deadline ends FAILED with `WorkflowTimeoutException`, even while an activity is running; finishing earlier
+  removes the deadline.
 
 ### Changed
 

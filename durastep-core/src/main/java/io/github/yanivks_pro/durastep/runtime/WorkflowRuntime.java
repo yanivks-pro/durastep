@@ -2,6 +2,7 @@ package io.github.yanivks_pro.durastep.runtime;
 
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.Workflow;
+import io.github.yanivks_pro.durastep.api.WorkflowTimeoutException;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
@@ -9,6 +10,8 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class WorkflowRuntime {
+
+  public static final int DEADLINE_TIMER_SEQ = 0;
 
   static final String CAUGHT_SUSPENSION =
       "workflow code caught Durastep's internal WorkflowSuspended error; "
@@ -23,6 +26,9 @@ public final class WorkflowRuntime {
   public List<Command> decide(
       WorkflowDefinition<?, ?> definition, String workflowId, List<HistoryEntry> history) {
     ReplayHistory replay = ReplayHistory.of(history);
+    if (replay.deadlinePassed()) {
+      return List.of(new FailWorkflow(Failure.of(new WorkflowTimeoutException(workflowId))));
+    }
     ReplayContext ctx = new ReplayContext(workflowId, replay, converter);
     AtomicReference<Object> result = new AtomicReference<>();
     AtomicReference<Throwable> thrown = new AtomicReference<>();

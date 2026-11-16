@@ -412,6 +412,32 @@ class JdbcWorkflowStoreIT {
   }
 
   @Test
+  void startingWithATimeoutStoresTheDeadlineAndItsTimer() throws SQLException {
+    store.start("order-42", "OrderWorkflow", ORDER, Optional.of(Duration.ofHours(1)));
+
+    assertThat(
+            count(
+                "workflows WHERE deadline_at BETWEEN now() + interval '59 minutes'"
+                    + " AND now() + interval '61 minutes'"))
+        .isEqualTo(1);
+    assertThat(
+            count(
+                "timers t JOIN durastep.workflows w ON w.id = t.workflow_id"
+                    + " WHERE t.seq = 0 AND t.fire_at = w.deadline_at"))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void startingAgainWithADifferentTimeoutChangesNothing() throws SQLException {
+    store.start("order-42", "OrderWorkflow", ORDER, Optional.of(Duration.ofHours(1)));
+
+    store.start("order-42", "OrderWorkflow", ORDER, Optional.of(Duration.ofSeconds(1)));
+
+    assertThat(count("timers")).isEqualTo(1);
+    assertThat(count("workflows WHERE deadline_at > now() + interval '59 minutes'")).isEqualTo(1);
+  }
+
+  @Test
   void rejectsASchemaNameThatIsNotAPlainIdentifier() {
     assertThatThrownBy(() -> new JdbcWorkflowStore(dataSource, "durastep; DROP TABLE x"))
         .isInstanceOf(IllegalArgumentException.class);
