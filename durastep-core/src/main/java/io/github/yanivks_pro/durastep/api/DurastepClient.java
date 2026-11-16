@@ -21,6 +21,26 @@ public interface DurastepClient {
       Class<? extends Workflow<I, O>> workflowClass, String workflowId, I input);
 
   /**
+   * Starts a workflow with options, such as a deadline for the whole workflow. Like {@link
+   * #start(Class, String, Object)}, it is safe to repeat; the options of an existing workflow are
+   * not changed.
+   *
+   * @param workflowClass the workflow to start
+   * @param workflowId the business ID, for example {@code order-42}; 1 to 255 characters
+   * @param input the workflow's input
+   * @param options the options for this workflow
+   * @param <I> the workflow's input type
+   * @param <O> the workflow's result type
+   * @return a handle to the workflow
+   * @throws IllegalArgumentException if a workflow with this ID exists with a different type
+   */
+  <I, O> WorkflowHandle<O> start(
+      Class<? extends Workflow<I, O>> workflowClass,
+      String workflowId,
+      I input,
+      WorkflowOptions options);
+
+  /**
    * Returns a handle to an existing workflow.
    *
    * @param workflowId the workflow's business ID

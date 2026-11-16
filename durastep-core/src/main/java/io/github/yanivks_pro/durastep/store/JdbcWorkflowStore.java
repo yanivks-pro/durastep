@@ -21,6 +21,7 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
+import io.github.yanivks_pro.durastep.runtime.WorkflowRuntime;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -74,6 +75,11 @@ public final class JdbcWorkflowStore {
   }
 
   public StartResult start(String workflowId, String type, Payload input) {
+    return start(workflowId, type, input, Optional.empty());
+  }
+
+  public StartResult start(
+      String workflowId, String type, Payload input, Optional<Duration> timeout) {
     return transactions.inTransaction(
         "start workflow " + workflowId,
         connection -> {
@@ -97,6 +103,24 @@ public final class JdbcWorkflowStore {
               connection,
               "INSERT INTO " + tasks + " (workflow_id, kind) VALUES (?, 'WORKFLOW')",
               workflowId);
+          if (timeout.isPresent()) {
+            update(
+                connection,
+                "UPDATE "
+                    + workflows
+                    + " SET deadline_at = now() + ? * interval '1 millisecond' WHERE id = ?",
+                timeout.get().toMillis(),
+                workflowId);
+            update(
+                connection,
+                "INSERT INTO "
+                    + timers
+                    + " (workflow_id, seq, fire_at) SELECT id, ?, deadline_at FROM "
+                    + workflows
+                    + " WHERE id = ?",
+                WorkflowRuntime.DEADLINE_TIMER_SEQ,
+                workflowId);
+          }
           return new StartResult(true, type);
         });
   }

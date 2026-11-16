@@ -56,10 +56,16 @@ public final class InvariantChecker {
     RULES.put(
         "a timer fires at most once and only for a started timer",
         "SELECT f.workflow_id || '/' || (f.payload->>'startedSeq') FROM durastep.history_events f"
-            + " WHERE f.event_type = 'TIMER_FIRED' GROUP BY f.workflow_id, f.payload->>'startedSeq'"
+            + " WHERE f.event_type = 'TIMER_FIRED' AND (f.payload->>'startedSeq')::int <> 0"
+            + " GROUP BY f.workflow_id, f.payload->>'startedSeq'"
             + " HAVING count(*) > 1 OR NOT bool_and(EXISTS (SELECT 1 FROM durastep.history_events s"
             + " WHERE s.workflow_id = f.workflow_id AND s.seq = (f.payload->>'startedSeq')::int"
             + " AND s.event_type = 'TIMER_STARTED'))");
+    RULES.put(
+        "the deadline timer fires only for a workflow with a deadline",
+        "SELECT f.workflow_id FROM durastep.history_events f JOIN durastep.workflows w"
+            + " ON w.id = f.workflow_id WHERE f.event_type = 'TIMER_FIRED'"
+            + " AND (f.payload->>'startedSeq')::int = 0 AND w.deadline_at IS NULL");
     RULES.put(
         "a finished workflow ends with its final event",
         "SELECT w.id FROM durastep.workflows w WHERE w.state <> 'RUNNING' AND NOT EXISTS"

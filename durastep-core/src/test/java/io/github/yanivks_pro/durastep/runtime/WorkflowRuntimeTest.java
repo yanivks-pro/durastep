@@ -7,6 +7,7 @@ import io.github.yanivks_pro.durastep.api.ActivityFailedException;
 import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.RetryPolicy;
+import io.github.yanivks_pro.durastep.api.WorkflowTimeoutException;
 import io.github.yanivks_pro.durastep.payload.JsonPayloadConverter;
 import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
@@ -370,6 +371,21 @@ class WorkflowRuntimeTest {
         .isInstanceOfSatisfying(
             FailWorkflow.class,
             fail -> assertThat(fail.failure().message()).contains("negative duration"));
+  }
+
+  @Test
+  void whenTheDeadlinePassesTheWorkflowFailsWithoutRunningMoreCode() {
+    History history =
+        History.startedWith(ORDER)
+            .scheduled("OrderActivities.chargeCard", "order-42", 4200)
+            .timerFired(WorkflowRuntime.DEADLINE_TIMER_SEQ);
+
+    assertThat(decide(history))
+        .containsExactly(
+            new FailWorkflow(
+                new Failure(
+                    WorkflowTimeoutException.class.getName(),
+                    "workflow order-42 did not finish before its deadline")));
   }
 
   private List<Command> decide(History history) {
