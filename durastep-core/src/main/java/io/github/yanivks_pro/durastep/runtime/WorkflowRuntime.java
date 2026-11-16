@@ -8,7 +8,10 @@ import io.github.yanivks_pro.durastep.api.WorkflowTimeoutException;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
+import io.github.yanivks_pro.durastep.runtime.Command.SetStatus;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class WorkflowRuntime {
@@ -56,11 +59,11 @@ public final class WorkflowRuntime {
         throw new WorkflowBlockedException(
             workflowId, new IllegalStateException(CAUGHT_SUSPENSION, thrown.get()));
       }
-      return ctx.newCommand() == null ? List.of() : List.of(ctx.newCommand());
+      return withStatus(ctx, ctx.newCommands());
     }
     if (thrown.get() instanceof ActivityFailedException
         || thrown.get() instanceof WorkflowFailedException) {
-      return List.of(new FailWorkflow(Failure.of(thrown.get())));
+      return withStatus(ctx, List.of(new FailWorkflow(Failure.of(thrown.get()))));
     }
     if (thrown.get() != null) {
       throw new WorkflowBlockedException(workflowId, thrown.get());
@@ -74,7 +77,18 @@ public final class WorkflowRuntime {
               + " steps, but its history has "
               + replay.steps().size());
     }
-    return List.of(new CompleteWorkflow(converter.toPayload(result.get())));
+    return withStatus(ctx, List.of(new CompleteWorkflow(converter.toPayload(result.get()))));
+  }
+
+  private static List<Command> withStatus(ReplayContext ctx, List<Command> commands) {
+    Optional<String> status = ctx.statusSet();
+    if (status.isEmpty()) {
+      return commands;
+    }
+    List<Command> withStatus = new ArrayList<>();
+    withStatus.add(new SetStatus(status.get()));
+    withStatus.addAll(commands);
+    return List.copyOf(withStatus);
   }
 
   private <I, O> O run(

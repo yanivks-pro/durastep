@@ -2,6 +2,7 @@ package io.github.yanivks_pro.durastep.api;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
 
@@ -49,6 +50,41 @@ public interface WorkflowContext {
    * @throws IllegalArgumentException if {@code duration} is negative
    */
   void sleep(Duration duration);
+
+  /**
+   * Waits for a signal sent with {@link DurastepClient#signal(String, String, Object)}, for as long
+   * as it takes. Signals that arrived before the workflow waited are kept, and each call takes the
+   * oldest one with this name that no earlier call has taken, so every signal is received exactly
+   * once.
+   *
+   * @param name the signal's name
+   * @param type the type of the signal's payload
+   * @param <T> the payload type
+   * @return the signal's payload
+   */
+  <T> T awaitSignal(String name, Class<T> type);
+
+  /**
+   * Waits for a signal, but at most {@code timeout}. The timeout is a durable timer, like {@link
+   * #sleep}.
+   *
+   * @param name the signal's name
+   * @param type the type of the signal's payload
+   * @param timeout how long to wait
+   * @param <T> the payload type
+   * @return the signal's payload, or empty if the timeout passed first
+   * @throws IllegalArgumentException if {@code timeout} is negative
+   */
+  <T> Optional<T> awaitSignal(String name, Class<T> type, Duration timeout);
+
+  /**
+   * Publishes a short, human-readable status, such as {@code "waiting for approval"}. The latest
+   * value is visible through {@link WorkflowHandle#describe()}. It is not part of the history.
+   *
+   * @param status at most 1,000 characters
+   * @throws IllegalArgumentException if {@code status} is longer than that
+   */
+  void setStatus(String status);
 
   /**
    * Returns the workflow's current time: the database time at which the workflow reached its

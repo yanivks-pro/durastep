@@ -18,6 +18,13 @@ public interface WorkflowHandle<O> {
   String id();
 
   /**
+   * Returns what the workflow is doing now: its state, published status and whether it is blocked.
+   *
+   * @return the workflow's current description
+   */
+  WorkflowDescription describe();
+
+  /**
    * Waits for the workflow to finish and returns its result.
    *
    * <p>If the timeout passes first, only the wait ends: the workflow keeps running and can be

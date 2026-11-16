@@ -9,17 +9,25 @@ import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
 import io.github.yanivks_pro.durastep.runtime.Command.StartTimer;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
 final class ReplayContext implements WorkflowContext {
+
+  static final int MAX_STATUS_LENGTH = 1_000;
 
   private final String workflowId;
   private final ReplayHistory history;
@@ -30,7 +38,10 @@ final class ReplayContext implements WorkflowContext {
   private int nextStep;
   private Instant now;
   private boolean suspended;
-  private Command newCommand;
+  private final List<Command> newCommands = new ArrayList<>();
+  private final Set<Integer> consumedSignals = new HashSet<>();
+  private String status;
+  private boolean statusSet;
   private NonDeterminismException nonDeterminism;
 
   ReplayContext(String workflowId, ReplayHistory history, PayloadConverter converter) {
@@ -90,8 +101,12 @@ final class ReplayContext implements WorkflowContext {
     return error == suspension;
   }
 
-  Command newCommand() {
-    return newCommand;
+  List<Command> newCommands() {
+    return List.copyOf(newCommands);
+  }
+
+  Optional<String> statusSet() {
+    return statusSet ? Optional.of(status) : Optional.empty();
   }
 
   NonDeterminismException nonDeterminism() {
@@ -109,7 +124,7 @@ final class ReplayContext implements WorkflowContext {
       throw new IllegalArgumentException("cannot sleep for a negative duration: " + duration);
     }
     ReplayHistory.Step step = reachStep(ReplayHistory.SLEEP, () -> new StartTimer(duration));
-    now = step.outcome().recordedAt();
+    advanceTo(step.outcome());
   }
 
   private Object callActivity(
@@ -118,7 +133,7 @@ final class ReplayContext implements WorkflowContext {
     ReplayHistory.Step step =
         reachStep(
             activity, () -> new ScheduleActivity(activity, converter.toArguments(args), options));
-    now = step.outcome().recordedAt();
+    advanceTo(step.outcome());
     return switch (step.outcome().event()) {
       case ActivityCompleted completed ->
           method.getReturnType() == void.class
@@ -131,29 +146,117 @@ final class ReplayContext implements WorkflowContext {
     };
   }
 
+  @Override
+  public <T> T awaitSignal(String name, Class<T> type) {
+    Objects.requireNonNull(name, "name");
+    Objects.requireNonNull(type, "type");
+    if (suspended) {
+      throw suspension;
+    }
+    Optional<HistoryEntry> signal = nextSignal(name, Integer.MAX_VALUE);
+    if (signal.isEmpty()) {
+      throw suspend();
+    }
+    return receive(signal.get(), type);
+  }
+
+  @Override
+  public <T> Optional<T> awaitSignal(String name, Class<T> type, Duration timeout) {
+    Objects.requireNonNull(name, "name");
+    Objects.requireNonNull(type, "type");
+    if (timeout.isNegative()) {
+      throw new IllegalArgumentException("cannot wait for a negative duration: " + timeout);
+    }
+    if (suspended) {
+      throw suspension;
+    }
+    String stepName = "awaitSignal(" + name + ")";
+    int stepIndex = nextStep++;
+    if (stepIndex >= history.steps().size()) {
+      newCommands.add(new StartTimer(timeout, name));
+      Optional<HistoryEntry> buffered = nextSignal(name, Integer.MAX_VALUE);
+      if (buffered.isEmpty()) {
+        throw suspend();
+      }
+      return Optional.of(receive(buffered.get(), type));
+    }
+    ReplayHistory.Step step = history.steps().get(stepIndex);
+    if (!step.name().equals(stepName)) {
+      throw mismatch(stepName, stepIndex, step);
+    }
+    int firedAt = step.hasOutcome() ? step.outcome().seq() : Integer.MAX_VALUE;
+    Optional<HistoryEntry> signal = nextSignal(name, firedAt);
+    if (signal.isPresent()) {
+      return Optional.of(receive(signal.get(), type));
+    }
+    if (!step.hasOutcome()) {
+      throw suspend();
+    }
+    advanceTo(step.outcome());
+    return Optional.empty();
+  }
+
+  @Override
+  public void setStatus(String status) {
+    Objects.requireNonNull(status, "status");
+    if (status.length() > MAX_STATUS_LENGTH) {
+      throw new IllegalArgumentException(
+          "a status may have at most " + MAX_STATUS_LENGTH + " characters");
+    }
+    this.status = status;
+    this.statusSet = true;
+  }
+
+  private Optional<HistoryEntry> nextSignal(String name, int beforeSeq) {
+    for (HistoryEntry entry : history.signals()) {
+      if (entry.seq() < beforeSeq
+          && !consumedSignals.contains(entry.seq())
+          && ((SignalReceived) entry.event()).name().equals(name)) {
+        return Optional.of(entry);
+      }
+    }
+    return Optional.empty();
+  }
+
+  private <T> T receive(HistoryEntry signal, Class<T> type) {
+    consumedSignals.add(signal.seq());
+    advanceTo(signal);
+    return type.cast(converter.fromPayload(((SignalReceived) signal.event()).payload(), type));
+  }
+
+  private void advanceTo(HistoryEntry entry) {
+    if (entry.recordedAt().isAfter(now)) {
+      now = entry.recordedAt();
+    }
+  }
+
+  private WorkflowSuspended mismatch(String name, int stepIndex, ReplayHistory.Step step) {
+    nonDeterminism =
+        new NonDeterminismException(
+            "workflow "
+                + workflowId
+                + " called "
+                + name
+                + " at step "
+                + (stepIndex + 1)
+                + ", but its history has "
+                + step.name()
+                + " there");
+    return suspend();
+  }
+
   private ReplayHistory.Step reachStep(String name, Supplier<Command> newStep) {
     if (suspended) {
       throw suspension;
     }
     int stepIndex = nextStep++;
     if (stepIndex >= history.steps().size()) {
-      newCommand = newStep.get();
+      newCommands.add(newStep.get());
       throw suspend();
     }
     ReplayHistory.Step step = history.steps().get(stepIndex);
     if (!step.name().equals(name)) {
-      nonDeterminism =
-          new NonDeterminismException(
-              "workflow "
-                  + workflowId
-                  + " called "
-                  + name
-                  + " at step "
-                  + (stepIndex + 1)
-                  + ", but its history has "
-                  + step.name()
-                  + " there");
-      throw suspend();
+      throw mismatch(name, stepIndex, step);
     }
     if (!step.hasOutcome()) {
       throw suspend();
