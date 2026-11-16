@@ -69,6 +69,18 @@ public interface DurastepClient {
   boolean signal(String workflowId, String name, Object payload, String requestId);
 
   /**
+   * Asks a running workflow to stop. The workflow sees a {@link CancelledException} at its next
+   * wait point, may clean up, and then ends in {@link WorkflowState#CANCELLED}. Activities that are
+   * already running are not interrupted, but their results are ignored.
+   *
+   * @param workflowId the workflow's business ID
+   * @return {@code true} if the request was accepted now, {@code false} if the workflow had already
+   *     finished or been asked to cancel
+   * @throws IllegalArgumentException if no workflow with this ID exists
+   */
+  boolean cancel(String workflowId);
+
+  /**
    * Returns a handle to an existing workflow.
    *
    * @param workflowId the workflow's business ID

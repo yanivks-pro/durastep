@@ -6,6 +6,7 @@ import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.CancelRequested;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
@@ -55,6 +56,10 @@ final class History {
 
   History signal(String name, Object payload) {
     return append(next(), new SignalReceived(name, JSON.toPayload(payload)));
+  }
+
+  History cancelRequested() {
+    return append(next(), new CancelRequested());
   }
 
   History timerFired(int startedSeq) {

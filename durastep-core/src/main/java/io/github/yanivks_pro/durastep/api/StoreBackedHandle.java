@@ -60,8 +60,7 @@ final class StoreBackedHandle<O> implements WorkflowHandle<O> {
         case FAILED ->
             throw new WorkflowFailedException(
                 workflowId, workflow.failure().type(), workflow.failure().message());
-        case CANCELLED ->
-            throw new IllegalStateException("workflow " + workflowId + " was cancelled");
+        case CANCELLED -> throw new WorkflowCancelledException(workflowId);
         case RUNNING -> {
           long remaining = deadline - System.nanoTime();
           if (remaining <= 0) {

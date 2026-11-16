@@ -6,6 +6,7 @@ import io.github.yanivks_pro.durastep.activity.ActivityResult.Failed;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
 import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.runtime.Command;
+import io.github.yanivks_pro.durastep.runtime.Command.CancelWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
@@ -17,9 +18,11 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.CancelRequested;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCancelled;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
@@ -317,6 +320,18 @@ public final class JdbcWorkflowStore {
                     task.workflowId());
                 finished = true;
               }
+              case CancelWorkflow ignored -> {
+                seq++;
+                appendEvent(connection, task.workflowId(), seq, new WorkflowCancelled(), null);
+                update(
+                    connection,
+                    "UPDATE "
+                        + workflows
+                        + " SET state = 'CANCELLED', blocked = false, blocked_error = NULL,"
+                        + " closed_at = now() WHERE id = ?",
+                    task.workflowId());
+                finished = true;
+              }
             }
           }
           crashPoints.reached(CrashPoint.MID_DECISION_COMMIT);
@@ -566,6 +581,45 @@ public final class JdbcWorkflowStore {
             notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
           }
           return fired.size();
+        });
+  }
+
+  public boolean cancel(String workflowId) {
+    return transactions.inTransaction(
+        "cancel workflow " + workflowId,
+        connection -> {
+          int requested =
+              update(
+                  connection,
+                  "UPDATE "
+                      + workflows
+                      + " SET cancel_requested = true, updated_at = now()"
+                      + " WHERE id = ? AND state = 'RUNNING' AND NOT cancel_requested",
+                  workflowId);
+          if (requested == 0) {
+            return false;
+          }
+          CancelRequested request = new CancelRequested();
+          update(
+              connection,
+              "INSERT INTO "
+                  + inbox
+                  + " (workflow_id, kind, payload, request_id) VALUES (?, ?, CAST(? AS jsonb), ?)"
+                  + " ON CONFLICT (workflow_id, request_id) DO NOTHING",
+              workflowId,
+              codec.typeOf(request),
+              codec.payloadOf(request),
+              "cancel");
+          update(
+              connection,
+              "INSERT INTO "
+                  + tasks
+                  + " (workflow_id, kind) VALUES (?, 'WORKFLOW')"
+                  + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
+                  + " DO UPDATE SET needs_rerun = true",
+              workflowId);
+          notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
+          return true;
         });
   }
 

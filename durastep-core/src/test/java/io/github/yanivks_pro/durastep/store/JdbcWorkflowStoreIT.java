@@ -10,6 +10,7 @@ import io.github.yanivks_pro.durastep.activity.ActivityResult.Failed;
 import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
 import io.github.yanivks_pro.durastep.payload.Payload;
+import io.github.yanivks_pro.durastep.runtime.Command.CancelWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
@@ -19,6 +20,7 @@ import io.github.yanivks_pro.durastep.runtime.Failure;
 import io.github.yanivks_pro.durastep.runtime.HistoryEntry;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.CancelRequested;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
@@ -546,6 +548,36 @@ class JdbcWorkflowStoreIT {
     assertThat(store.find("exp-3").orElseThrow().status()).isEqualTo("waiting for approval");
     assertThat(eventTypes("exp-3")).containsExactly("WORKFLOW_STARTED", "ACTIVITY_SCHEDULED");
     assertThat(count("workflows WHERE history_length = 2")).isEqualTo(1);
+  }
+
+  @Test
+  void aCancelRequestIsRecordedOnceAndWakesTheDecider() throws SQLException {
+    store.start("order-c", "OrderWorkflow", ORDER);
+    ClaimedTask decide = claim(TaskKind.WORKFLOW);
+    store.commitDecision(decide, store.loadDecision(decide), List.of());
+
+    boolean first = store.cancel("order-c");
+    boolean second = store.cancel("order-c");
+
+    assertThat(first).isTrue();
+    assertThat(second).isFalse();
+    assertThat(count("workflows WHERE cancel_requested")).isEqualTo(1);
+    assertThat(store.loadDecision(claim(TaskKind.WORKFLOW)).inbox())
+        .extracting(InboxEntry::event)
+        .containsExactly(new CancelRequested());
+  }
+
+  @Test
+  void aCancelledWorkflowIsClosedAndCannotBeCancelledAgain() throws SQLException {
+    store.start("order-d", "OrderWorkflow", ORDER);
+    ClaimedTask decide = claim(TaskKind.WORKFLOW);
+
+    store.commitDecision(decide, store.loadDecision(decide), List.of(new CancelWorkflow()));
+
+    assertThat(store.find("order-d").orElseThrow().state()).isEqualTo(WorkflowState.CANCELLED);
+    assertThat(eventTypes("order-d")).containsExactly("WORKFLOW_STARTED", "WORKFLOW_CANCELLED");
+    assertThat(count("workflows WHERE closed_at IS NOT NULL")).isEqualTo(1);
+    assertThat(store.cancel("order-d")).isFalse();
   }
 
   @Test

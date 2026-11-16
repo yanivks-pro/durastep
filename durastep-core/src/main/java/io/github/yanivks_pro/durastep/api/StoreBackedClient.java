@@ -64,6 +64,15 @@ final class StoreBackedClient implements DurastepClient {
   }
 
   @Override
+  public boolean cancel(String workflowId) {
+    Objects.requireNonNull(workflowId, "workflowId");
+    if (store.find(workflowId).isEmpty()) {
+      throw new IllegalArgumentException("no workflow " + workflowId + " exists");
+    }
+    return store.cancel(workflowId);
+  }
+
+  @Override
   public <O> WorkflowHandle<O> handle(
       String workflowId, Class<? extends Workflow<?, O>> workflowClass) {
     Objects.requireNonNull(workflowClass, "workflowClass");

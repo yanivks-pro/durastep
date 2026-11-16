@@ -1,11 +1,13 @@
 package io.github.yanivks_pro.durastep.runtime;
 
 import io.github.yanivks_pro.durastep.api.ActivityFailedException;
+import io.github.yanivks_pro.durastep.api.CancelledException;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowFailedException;
 import io.github.yanivks_pro.durastep.api.WorkflowTimeoutException;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
+import io.github.yanivks_pro.durastep.runtime.Command.CancelWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.SetStatus;
@@ -65,6 +67,9 @@ public final class WorkflowRuntime {
         || thrown.get() instanceof WorkflowFailedException) {
       return withStatus(ctx, List.of(new FailWorkflow(Failure.of(thrown.get()))));
     }
+    if (thrown.get() instanceof CancelledException && ctx.cancellationDelivered()) {
+      return withStatus(ctx, List.of(new CancelWorkflow()));
+    }
     if (thrown.get() != null) {
       throw new WorkflowBlockedException(workflowId, thrown.get());
     }
@@ -76,6 +81,9 @@ public final class WorkflowRuntime {
               + ctx.stepsReached()
               + " steps, but its history has "
               + replay.steps().size());
+    }
+    if (ctx.cancellationDelivered()) {
+      return withStatus(ctx, List.of(new CancelWorkflow()));
     }
     return withStatus(ctx, List.of(new CompleteWorkflow(converter.toPayload(result.get()))));
   }
