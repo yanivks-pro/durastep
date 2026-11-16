@@ -98,6 +98,7 @@ class EventCodecTest {
         ActivityOptions.builder()
             .attemptTimeout(Duration.ofSeconds(10))
             .totalTimeout(Duration.ofMinutes(5))
+            .heartbeatTimeout(Duration.ofSeconds(20))
             .retryPolicy(
                 RetryPolicy.builder()
                     .maxAttempts(3)

@@ -303,18 +303,30 @@ public final class Worker {
     }
   }
 
+  private boolean extendLease(ClaimedTask task, Duration attemptLease) {
+    try {
+      store.extendLease(task, attemptLease);
+      return true;
+    } catch (StaleTaskException e) {
+      return false;
+    }
+  }
+
   private void runActivity(ClaimedTask task) throws InterruptedException {
     ActivityToRun activity = store.loadActivity(task);
     ActivityOptions options = activity.options();
     try {
-      store.extendLease(task, options.attemptTimeout().plus(lease));
+      Duration attemptLease =
+          options.heartbeatTimeout().orElse(options.attemptTimeout().plus(lease));
+      store.extendLease(task, attemptLease);
       ActivityResult result =
           activityRuntime.execute(
               activity.activity(),
               activity.arguments(),
               activity.workflowId(),
               activity.scheduledSeq(),
-              options);
+              options,
+              () -> extendLease(task, attemptLease));
       crashPoints.reached(CrashPoint.AFTER_ACTIVITY_RAN);
       if (result instanceof Failed failed
           && failed.retryable()
