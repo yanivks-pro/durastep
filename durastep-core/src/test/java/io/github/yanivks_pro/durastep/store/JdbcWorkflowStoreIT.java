@@ -13,10 +13,12 @@ import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
+import io.github.yanivks_pro.durastep.runtime.Command.StartTimer;
 import io.github.yanivks_pro.durastep.runtime.Failure;
 import io.github.yanivks_pro.durastep.runtime.HistoryEntry;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -354,6 +356,59 @@ class JdbcWorkflowStoreIT {
 
     assertThatThrownBy(() -> store.extendLease(frozen, Duration.ofMinutes(1)))
         .isInstanceOf(StaleTaskException.class);
+  }
+
+  @Test
+  void aSleepSavesItsEventAndATimerThatFiresInTheFuture() throws SQLException {
+    store.start("order-42", "OrderWorkflow", ORDER);
+    ClaimedTask decide = claim(TaskKind.WORKFLOW);
+
+    store.commitDecision(
+        decide, store.loadDecision(decide), List.of(new StartTimer(Duration.ofDays(3))));
+
+    assertThat(eventTypes("order-42")).containsExactly("WORKFLOW_STARTED", "TIMER_STARTED");
+    assertThat(
+            count(
+                "timers WHERE workflow_id = 'order-42' AND seq = 2"
+                    + " AND fire_at BETWEEN now() + interval '3 days' - interval '1 minute'"
+                    + " AND now() + interval '3 days' + interval '1 minute'"))
+        .isEqualTo(1);
+    assertThat(store.fireDueTimers(100)).isZero();
+    assertThat(count("tasks")).isZero();
+  }
+
+  @Test
+  void aDueTimerFiresOnceIntoTheInboxAndWakesTheDecider() throws SQLException {
+    store.start("order-42", "OrderWorkflow", ORDER);
+    ClaimedTask decide = claim(TaskKind.WORKFLOW);
+    store.commitDecision(
+        decide, store.loadDecision(decide), List.of(new StartTimer(Duration.ofDays(3))));
+    execute("UPDATE durastep.timers SET fire_at = now() - interval '1 second'");
+
+    int firstPass = store.fireDueTimers(100);
+    int secondPass = store.fireDueTimers(100);
+
+    assertThat(firstPass).isEqualTo(1);
+    assertThat(secondPass).isZero();
+    assertThat(count("timers")).isZero();
+    assertThat(store.loadDecision(claim(TaskKind.WORKFLOW)).inbox())
+        .extracting(InboxEntry::event)
+        .containsExactly(new TimerFired(2));
+  }
+
+  @Test
+  void finishingAWorkflowRemovesItsTimers() throws SQLException {
+    store.start("order-42", "OrderWorkflow", ORDER);
+    ClaimedTask decide = claim(TaskKind.WORKFLOW);
+    store.commitDecision(
+        decide, store.loadDecision(decide), List.of(new StartTimer(Duration.ofDays(3))));
+    execute("INSERT INTO durastep.tasks (workflow_id, kind) VALUES ('order-42', 'WORKFLOW')");
+    ClaimedTask finish = claim(TaskKind.WORKFLOW);
+
+    store.commitDecision(
+        finish, store.loadDecision(finish), List.of(new FailWorkflow(new Failure("E", "stopped"))));
+
+    assertThat(count("timers")).isZero();
   }
 
   @Test

@@ -28,6 +28,9 @@ import org.slf4j.LoggerFactory;
 public final class Worker {
 
   public static final String DEFAULT_QUEUE = "default";
+  public static final Duration TIMER_CHECK_INTERVAL = Duration.ofMillis(500);
+
+  private static final int TIMERS_PER_BATCH = 100;
 
   private static final Logger log = LoggerFactory.getLogger(Worker.class);
 
@@ -43,6 +46,7 @@ public final class Worker {
   private volatile boolean running;
   private Thread decider;
   private Thread activityRunner;
+  private Thread timerFirer;
 
   public Worker(
       JdbcWorkflowStore store,
@@ -71,6 +75,7 @@ public final class Worker {
     decider = Thread.ofVirtual().name(owner + "-decider").start(() -> loop(TaskKind.WORKFLOW));
     activityRunner =
         Thread.ofVirtual().name(owner + "-activities").start(() -> loop(TaskKind.ACTIVITY));
+    timerFirer = Thread.ofVirtual().name(owner + "-timers").start(this::fireTimers);
     log.info("worker {} started", owner);
   }
 
@@ -79,7 +84,7 @@ public final class Worker {
       return;
     }
     running = false;
-    for (Thread thread : List.of(decider, activityRunner)) {
+    for (Thread thread : List.of(decider, activityRunner, timerFirer)) {
       if (!thread.join(grace)) {
         thread.interrupt();
         thread.join();
@@ -106,6 +111,27 @@ public final class Worker {
         log.error("worker {} hit an unexpected error while processing {} tasks", owner, kind, e);
         try {
           Thread.sleep(pollInterval);
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          return;
+        }
+      }
+    }
+  }
+
+  private void fireTimers() {
+    while (running) {
+      try {
+        if (store.fireDueTimers(TIMERS_PER_BATCH) < TIMERS_PER_BATCH) {
+          Thread.sleep(TIMER_CHECK_INTERVAL);
+        }
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return;
+      } catch (RuntimeException e) {
+        log.error("worker {} hit an unexpected error while firing timers", owner, e);
+        try {
+          Thread.sleep(TIMER_CHECK_INTERVAL);
         } catch (InterruptedException interrupted) {
           Thread.currentThread().interrupt();
           return;

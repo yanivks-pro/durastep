@@ -50,6 +50,17 @@ public final class InvariantChecker {
         "SELECT DISTINCT w.id FROM durastep.workflows w JOIN durastep.inbox i"
             + " ON i.workflow_id = w.id WHERE w.state <> 'RUNNING'");
     RULES.put(
+        "a finished workflow has no timers",
+        "SELECT DISTINCT w.id FROM durastep.workflows w JOIN durastep.timers t"
+            + " ON t.workflow_id = w.id WHERE w.state <> 'RUNNING'");
+    RULES.put(
+        "a timer fires at most once and only for a started timer",
+        "SELECT f.workflow_id || '/' || (f.payload->>'startedSeq') FROM durastep.history_events f"
+            + " WHERE f.event_type = 'TIMER_FIRED' GROUP BY f.workflow_id, f.payload->>'startedSeq'"
+            + " HAVING count(*) > 1 OR NOT bool_and(EXISTS (SELECT 1 FROM durastep.history_events s"
+            + " WHERE s.workflow_id = f.workflow_id AND s.seq = (f.payload->>'startedSeq')::int"
+            + " AND s.event_type = 'TIMER_STARTED'))");
+    RULES.put(
         "a finished workflow ends with its final event",
         "SELECT w.id FROM durastep.workflows w WHERE w.state <> 'RUNNING' AND NOT EXISTS"
             + " (SELECT 1 FROM durastep.history_events h WHERE h.workflow_id = w.id"

@@ -11,6 +11,8 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
@@ -35,6 +37,8 @@ class EventCodecTest {
         new ActivityCompleted(2, new Payload("\"ch_9f2\"")),
         new ActivityCompleted(4, new Payload("null")),
         new ActivityFailed(2, failure, 3),
+        new TimerStarted(Duration.ofDays(3)),
+        new TimerFired(4),
         new WorkflowCompleted(new Payload("{\"chargeId\":\"ch_9f2\"}")),
         new WorkflowFailed(failure));
   }

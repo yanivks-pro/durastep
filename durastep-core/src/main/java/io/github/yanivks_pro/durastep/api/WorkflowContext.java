@@ -1,5 +1,6 @@
 package io.github.yanivks_pro.durastep.api;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Random;
 import java.util.UUID;
@@ -36,6 +37,18 @@ public interface WorkflowContext {
    * @throws IllegalArgumentException if {@code activityInterface} is not an interface
    */
   <T> T activities(Class<T> activityInterface, ActivityOptions options);
+
+  /**
+   * Pauses the workflow durably. The wake-up time is stored in the database, so the sleep survives
+   * restarts and may last days; any engine continues the workflow when the time has come, about a
+   * second after it. On replay, a sleep that has already ended returns at once.
+   *
+   * <p>After waking up, {@link #now()} returns the time the timer fired.
+   *
+   * @param duration how long to sleep; zero wakes up at the next check
+   * @throws IllegalArgumentException if {@code duration} is negative
+   */
+  void sleep(Duration duration);
 
   /**
    * Returns the workflow's current time: the database time at which the workflow reached its

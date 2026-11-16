@@ -6,15 +6,18 @@ import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
+import io.github.yanivks_pro.durastep.runtime.Command.StartTimer;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Random;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 final class ReplayContext implements WorkflowContext {
 
@@ -27,7 +30,7 @@ final class ReplayContext implements WorkflowContext {
   private int nextStep;
   private Instant now;
   private boolean suspended;
-  private ScheduleActivity newCommand;
+  private Command newCommand;
   private NonDeterminismException nonDeterminism;
 
   ReplayContext(String workflowId, ReplayHistory history, PayloadConverter converter) {
@@ -87,7 +90,7 @@ final class ReplayContext implements WorkflowContext {
     return error == suspension;
   }
 
-  ScheduleActivity newCommand() {
+  Command newCommand() {
     return newCommand;
   }
 
@@ -99,49 +102,63 @@ final class ReplayContext implements WorkflowContext {
     return nextStep;
   }
 
+  @Override
+  public void sleep(Duration duration) {
+    Objects.requireNonNull(duration, "duration");
+    if (duration.isNegative()) {
+      throw new IllegalArgumentException("cannot sleep for a negative duration: " + duration);
+    }
+    ReplayHistory.Step step = reachStep(ReplayHistory.SLEEP, () -> new StartTimer(duration));
+    now = step.outcome().recordedAt();
+  }
+
   private Object callActivity(
       Class<?> activityInterface, Method method, Object[] args, ActivityOptions options) {
+    String activity = activityInterface.getSimpleName() + "." + method.getName();
+    ReplayHistory.Step step =
+        reachStep(
+            activity, () -> new ScheduleActivity(activity, converter.toArguments(args), options));
+    now = step.outcome().recordedAt();
+    return switch (step.outcome().event()) {
+      case ActivityCompleted completed ->
+          method.getReturnType() == void.class
+              ? null
+              : converter.fromPayload(completed.result(), method.getGenericReturnType());
+      case ActivityFailed failed ->
+          throw new ActivityFailedException(
+              activity, failed.failure().type(), failed.failure().message(), failed.attempts());
+      default -> throw new IllegalStateException("unexpected outcome " + step.outcome());
+    };
+  }
+
+  private ReplayHistory.Step reachStep(String name, Supplier<Command> newStep) {
     if (suspended) {
       throw suspension;
     }
-    String activity = activityInterface.getSimpleName() + "." + method.getName();
     int stepIndex = nextStep++;
     if (stepIndex >= history.steps().size()) {
-      newCommand = new ScheduleActivity(activity, converter.toArguments(args), options);
+      newCommand = newStep.get();
       throw suspend();
     }
     ReplayHistory.Step step = history.steps().get(stepIndex);
-    if (!step.activity().equals(activity)) {
+    if (!step.name().equals(name)) {
       nonDeterminism =
           new NonDeterminismException(
               "workflow "
                   + workflowId
                   + " called "
-                  + activity
+                  + name
                   + " at step "
                   + (stepIndex + 1)
                   + ", but its history has "
-                  + step.activity()
+                  + step.name()
                   + " there");
       throw suspend();
     }
     if (!step.hasOutcome()) {
       throw suspend();
     }
-    return switch (step.outcome().event()) {
-      case ActivityCompleted completed -> {
-        now = step.outcome().recordedAt();
-        yield method.getReturnType() == void.class
-            ? null
-            : converter.fromPayload(completed.result(), method.getGenericReturnType());
-      }
-      case ActivityFailed failed -> {
-        now = step.outcome().recordedAt();
-        throw new ActivityFailedException(
-            activity, failed.failure().type(), failed.failure().message(), failed.attempts());
-      }
-      default -> throw new IllegalStateException("unexpected outcome " + step.outcome());
-    };
+    return step;
   }
 
   private WorkflowSuspended suspend() {
