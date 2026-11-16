@@ -19,6 +19,11 @@ All notable changes to Durastep are recorded here. The format follows
 - Workflow deadlines: `client.start(..., WorkflowOptions.timeout(duration))`. A workflow still running at its
   deadline ends FAILED with `WorkflowTimeoutException`, even while an activity is running; finishing earlier
   removes the deadline.
+- `WorkflowFailedException(message)` lets workflow code fail on purpose, for a business reason.
+- BLOCKED workflows: a bug, a mismatch between code and history, or an unknown workflow type now leaves the
+  workflow RUNNING with a `blocked` flag and the error, including its stack trace, saved. Nothing is written to
+  history, the decision is retried after 1 second doubling up to 5 minutes, and the workflow continues by itself
+  once a fix is deployed.
 
 ### Changed
 
@@ -27,6 +32,11 @@ All notable changes to Durastep are recorded here. The format follows
   `ActivityFailedException`, and its failure then names the activity and the number of attempts.
 - While an activity runs, its lease is extended to its attempt limit plus one lease, so a slow attempt is not
   taken over by another worker. A crashed activity is therefore resumed after that time.
+- An unexpected exception in workflow code no longer fails the workflow; it blocks it until the code is fixed.
+  Only an uncaught `ActivityFailedException`, a `WorkflowFailedException` or a deadline end a workflow as
+  FAILED.
+- A workflow whose code no longer matches its history is now visibly BLOCKED instead of being retried quietly
+  after each lease.
 
 ## [0.1.0] - 2026-11-15
 

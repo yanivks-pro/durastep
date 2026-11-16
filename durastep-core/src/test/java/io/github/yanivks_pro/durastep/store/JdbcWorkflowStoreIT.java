@@ -438,6 +438,68 @@ class JdbcWorkflowStoreIT {
   }
 
   @Test
+  void blockingSavesTheErrorButNotHistoryAndTriesTheDecisionAgainLater() throws SQLException {
+    store.completeActivity(
+        workflowWaitingForChargeCard(), new Completed(new Payload("\"ch_9f2\"")));
+    ClaimedTask decide = claim(TaskKind.WORKFLOW);
+
+    store.blockDecision(
+        decide, new NullPointerException("customer is null"), Duration.ofSeconds(30));
+
+    assertThat(count("workflows WHERE blocked AND state = 'RUNNING'")).isEqualTo(1);
+    assertThat(count("workflows WHERE blocked_error->>'type' = 'java.lang.NullPointerException'"))
+        .isEqualTo(1);
+    assertThat(count("workflows WHERE jsonb_array_length(blocked_error->'stackTrace') > 0"))
+        .isEqualTo(1);
+    assertThat(eventTypes("order-42")).containsExactly("WORKFLOW_STARTED", "ACTIVITY_SCHEDULED");
+    assertThat(count("inbox")).isEqualTo(1);
+    assertThat(
+            count(
+                "tasks WHERE kind = 'WORKFLOW' AND attempt = 2 AND lease_owner IS NULL"
+                    + " AND visible_at > now() + interval '25 seconds'"))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void aSuccessfulDecisionClearsTheBlockedFlag() throws SQLException {
+    store.start("order-42", "OrderWorkflow", ORDER);
+    store.blockDecision(
+        claim(TaskKind.WORKFLOW), new IllegalStateException("bug"), Duration.ofMillis(1));
+    ClaimedTask retry =
+        await()
+            .atMost(Duration.ofSeconds(5))
+            .until(
+                () -> store.claim(TaskKind.WORKFLOW, "default", "worker-a", LEASE),
+                Optional::isPresent)
+            .orElseThrow();
+
+    store.commitDecision(
+        retry,
+        store.loadDecision(retry),
+        List.of(
+            new ScheduleActivity(
+                "OrderActivities.chargeCard", CHARGE_ARGS, ActivityOptions.DEFAULT)));
+
+    assertThat(retry.attempt()).isEqualTo(2);
+    assertThat(count("workflows WHERE NOT blocked AND blocked_error IS NULL")).isEqualTo(1);
+  }
+
+  @Test
+  void aWorkerThatLostItsTaskCannotBlockTheWorkflow() throws SQLException {
+    store.start("order-42", "OrderWorkflow", ORDER);
+    ClaimedTask frozen =
+        store.claim(TaskKind.WORKFLOW, "default", "worker-a", Duration.ZERO).orElseThrow();
+    assertThat(store.claim(TaskKind.WORKFLOW, "default", "worker-b", LEASE)).isPresent();
+
+    assertThatThrownBy(
+            () ->
+                store.blockDecision(
+                    frozen, new IllegalStateException("bug"), Duration.ofSeconds(1)))
+        .isInstanceOf(StaleTaskException.class);
+    assertThat(count("workflows WHERE blocked")).isZero();
+  }
+
+  @Test
   void rejectsASchemaNameThatIsNotAPlainIdentifier() {
     assertThatThrownBy(() -> new JdbcWorkflowStore(dataSource, "durastep; DROP TABLE x"))
         .isInstanceOf(IllegalArgumentException.class);

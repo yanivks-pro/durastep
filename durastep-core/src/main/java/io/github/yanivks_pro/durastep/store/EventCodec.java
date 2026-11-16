@@ -32,6 +32,8 @@ final class EventCodec {
   static final String WORKFLOW_COMPLETED = "WORKFLOW_COMPLETED";
   static final String WORKFLOW_FAILED = "WORKFLOW_FAILED";
 
+  private static final int STACK_FRAMES_PER_ERROR = 20;
+
   private final JsonMapper mapper = JsonMapper.builder().build();
 
   String typeOf(HistoryEvent event) {
@@ -110,6 +112,23 @@ final class EventCodec {
 
   String failureJson(Failure failure) {
     return failureTree(failure).toString();
+  }
+
+  String errorJson(Throwable error) {
+    ArrayNode stackTrace = mapper.createArrayNode();
+    addFrames(stackTrace, error);
+    for (Throwable cause = error.getCause(); cause != null; cause = cause.getCause()) {
+      stackTrace.add("Caused by: " + cause);
+      addFrames(stackTrace, cause);
+    }
+    return failureTree(Failure.of(error)).set("stackTrace", stackTrace).toString();
+  }
+
+  private static void addFrames(ArrayNode stackTrace, Throwable error) {
+    StackTraceElement[] frames = error.getStackTrace();
+    for (int i = 0; i < Math.min(frames.length, STACK_FRAMES_PER_ERROR); i++) {
+      stackTrace.add("at " + frames[i]);
+    }
   }
 
   Failure failure(String json) {

@@ -1,7 +1,9 @@
 package io.github.yanivks_pro.durastep.runtime;
 
+import io.github.yanivks_pro.durastep.api.ActivityFailedException;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.Workflow;
+import io.github.yanivks_pro.durastep.api.WorkflowFailedException;
 import io.github.yanivks_pro.durastep.api.WorkflowTimeoutException;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
@@ -51,14 +53,17 @@ public final class WorkflowRuntime {
     }
     if (ctx.suspended()) {
       if (!ctx.isSuspension(thrown.get())) {
-        return List.of(
-            new FailWorkflow(
-                new Failure(IllegalStateException.class.getName(), CAUGHT_SUSPENSION)));
+        throw new WorkflowBlockedException(
+            workflowId, new IllegalStateException(CAUGHT_SUSPENSION, thrown.get()));
       }
       return ctx.newCommand() == null ? List.of() : List.of(ctx.newCommand());
     }
-    if (thrown.get() != null) {
+    if (thrown.get() instanceof ActivityFailedException
+        || thrown.get() instanceof WorkflowFailedException) {
       return List.of(new FailWorkflow(Failure.of(thrown.get())));
+    }
+    if (thrown.get() != null) {
+      throw new WorkflowBlockedException(workflowId, thrown.get());
     }
     if (ctx.stepsReached() < replay.steps().size()) {
       throw new NonDeterminismException(
