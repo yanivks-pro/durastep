@@ -3,6 +3,7 @@ package io.github.yanivks_pro.durastep.runtime;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
@@ -15,7 +16,11 @@ import java.util.List;
 import java.util.Map;
 
 record ReplayHistory(
-    WorkflowStarted started, Instant startedAt, List<Step> steps, boolean deadlinePassed) {
+    WorkflowStarted started,
+    Instant startedAt,
+    List<Step> steps,
+    List<HistoryEntry> signals,
+    boolean deadlinePassed) {
 
   static final String SLEEP = "sleep";
 
@@ -38,6 +43,7 @@ record ReplayHistory(
     Map<Integer, HistoryEntry> outcomeBySeq = new HashMap<>();
     List<HistoryEntry> stepsInOrder = new ArrayList<>();
     boolean deadlinePassed = false;
+    List<HistoryEntry> signals = new ArrayList<>();
     for (int i = 0; i < history.size(); i++) {
       HistoryEntry entry = history.get(i);
       boolean first = i == 0;
@@ -70,6 +76,7 @@ record ReplayHistory(
             deadlinePassed = true;
         case TimerFired fired ->
             recordOutcome(entry, fired.startedSeq(), TimerStarted.class, stepsBySeq, outcomeBySeq);
+        case SignalReceived ignored -> signals.add(entry);
         case WorkflowCompleted ignored ->
             throw new IllegalStateException("the workflow has already completed");
         case WorkflowFailed ignored ->
@@ -78,12 +85,14 @@ record ReplayHistory(
     }
     List<Step> steps =
         stepsInOrder.stream().map(step -> new Step(step, outcomeBySeq.get(step.seq()))).toList();
-    return new ReplayHistory(started, history.getFirst().recordedAt(), steps, deadlinePassed);
+    return new ReplayHistory(
+        started, history.getFirst().recordedAt(), steps, List.copyOf(signals), deadlinePassed);
   }
 
   static String nameOf(HistoryEntry step) {
     return switch (step.event()) {
       case ActivityScheduled scheduled -> scheduled.activity();
+      case TimerStarted timer when timer.signal() != null -> "awaitSignal(" + timer.signal() + ")";
       case TimerStarted ignored -> SLEEP;
       default -> throw new IllegalArgumentException("event " + step.seq() + " is not a step");
     };

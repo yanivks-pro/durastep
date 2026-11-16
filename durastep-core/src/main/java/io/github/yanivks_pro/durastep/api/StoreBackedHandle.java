@@ -34,6 +34,16 @@ final class StoreBackedHandle<O> implements WorkflowHandle<O> {
   }
 
   @Override
+  public WorkflowDescription describe() {
+    StoredWorkflow workflow =
+        store
+            .find(workflowId)
+            .orElseThrow(() -> new IllegalStateException("workflow " + workflowId + " is gone"));
+    return new WorkflowDescription(
+        workflowId, workflow.type(), workflow.state(), workflow.status(), workflow.blocked());
+  }
+
+  @Override
   public O result(Duration timeout) throws TimeoutException, InterruptedException {
     long deadline = System.nanoTime() + timeout.toNanos();
     while (true) {

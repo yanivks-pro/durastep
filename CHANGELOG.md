@@ -6,6 +6,14 @@ All notable changes to Durastep are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Signals: `client.signal(id, name, payload)`, with an optional request ID that makes retried sends safe, and
+  `ctx.awaitSignal(name, type[, timeout])` in workflow code. Signals that arrive early are kept until the
+  workflow waits, and each one is received exactly once.
+- Published status: `ctx.setStatus(text)` and `handle.describe()`, which returns a workflow's state, status and
+  whether it is blocked.
+
 ## [0.3.0] - 2026-11-16
 
 ### Added

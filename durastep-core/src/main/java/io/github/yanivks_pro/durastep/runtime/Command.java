@@ -9,7 +9,14 @@ public sealed interface Command {
   record ScheduleActivity(String activity, Payload arguments, ActivityOptions options)
       implements Command {}
 
-  record StartTimer(Duration duration) implements Command {}
+  record StartTimer(Duration duration, String signal) implements Command {
+
+    public StartTimer(Duration duration) {
+      this(duration, null);
+    }
+  }
+
+  record SetStatus(String status) implements Command {}
 
   record CompleteWorkflow(Payload result) implements Command {}
 

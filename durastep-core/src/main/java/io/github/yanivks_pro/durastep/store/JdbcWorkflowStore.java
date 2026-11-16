@@ -9,6 +9,7 @@ import io.github.yanivks_pro.durastep.runtime.Command;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
+import io.github.yanivks_pro.durastep.runtime.Command.SetStatus;
 import io.github.yanivks_pro.durastep.runtime.Command.StartTimer;
 import io.github.yanivks_pro.durastep.runtime.Failure;
 import io.github.yanivks_pro.durastep.runtime.HistoryEntry;
@@ -16,6 +17,7 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
@@ -237,9 +239,15 @@ public final class JdbcWorkflowStore {
           }
           boolean finished = false;
           for (Command command : commands) {
-            seq++;
             switch (command) {
+              case SetStatus setStatus ->
+                  update(
+                      connection,
+                      "UPDATE " + workflows + " SET status = ? WHERE id = ?",
+                      setStatus.status(),
+                      task.workflowId());
               case ScheduleActivity schedule -> {
+                seq++;
                 appendEvent(
                     connection,
                     task.workflowId(),
@@ -258,8 +266,13 @@ public final class JdbcWorkflowStore {
                 notifyWork(connection, TaskKind.ACTIVITY, schedule.options().queue());
               }
               case StartTimer timer -> {
+                seq++;
                 appendEvent(
-                    connection, task.workflowId(), seq, new TimerStarted(timer.duration()), null);
+                    connection,
+                    task.workflowId(),
+                    seq,
+                    new TimerStarted(timer.duration(), timer.signal()),
+                    null);
                 update(
                     connection,
                     "INSERT INTO "
@@ -271,6 +284,7 @@ public final class JdbcWorkflowStore {
                     timer.duration().toMillis());
               }
               case CompleteWorkflow complete -> {
+                seq++;
                 appendEvent(
                     connection,
                     task.workflowId(),
@@ -289,6 +303,7 @@ public final class JdbcWorkflowStore {
                 finished = true;
               }
               case FailWorkflow fail -> {
+                seq++;
                 appendEvent(
                     connection, task.workflowId(), seq, new WorkflowFailed(fail.failure()), null);
                 update(
@@ -554,13 +569,52 @@ public final class JdbcWorkflowStore {
         });
   }
 
+  public boolean signal(String workflowId, String name, Payload payload, String requestId) {
+    return transactions.inTransaction(
+        "signal workflow " + workflowId,
+        connection -> {
+          WorkflowState state = stateOf(connection, workflowId);
+          if (state != WorkflowState.RUNNING) {
+            throw new IllegalStateException(
+                "workflow " + workflowId + " is " + state + " and can no longer receive signals");
+          }
+          SignalReceived signal = new SignalReceived(name, payload);
+          int accepted =
+              update(
+                  connection,
+                  "INSERT INTO "
+                      + inbox
+                      + " (workflow_id, kind, name, payload, request_id)"
+                      + " VALUES (?, ?, ?, CAST(? AS jsonb), ?)"
+                      + " ON CONFLICT (workflow_id, request_id) DO NOTHING",
+                  workflowId,
+                  codec.typeOf(signal),
+                  name,
+                  codec.payloadOf(signal),
+                  "signal-" + requestId);
+          if (accepted == 0) {
+            return false;
+          }
+          update(
+              connection,
+              "INSERT INTO "
+                  + tasks
+                  + " (workflow_id, kind) VALUES (?, 'WORKFLOW')"
+                  + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
+                  + " DO UPDATE SET needs_rerun = true",
+              workflowId);
+          notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
+          return true;
+        });
+  }
+
   public Optional<StoredWorkflow> find(String workflowId) {
     return transactions.inTransaction(
         "read workflow " + workflowId,
         connection -> {
           try (PreparedStatement statement =
               connection.prepareStatement(
-                  "SELECT type, state, result::text, failure::text FROM "
+                  "SELECT type, state, result::text, failure::text, status, blocked FROM "
                       + workflows
                       + " WHERE id = ?")) {
             statement.setString(1, workflowId);
@@ -576,7 +630,9 @@ public final class JdbcWorkflowStore {
                       row.getString(1),
                       WorkflowState.valueOf(row.getString(2)),
                       result == null ? null : new Payload(result),
-                      failure == null ? null : codec.failure(failure)));
+                      failure == null ? null : codec.failure(failure),
+                      row.getString(5),
+                      row.getBoolean(6)));
             }
           }
         });

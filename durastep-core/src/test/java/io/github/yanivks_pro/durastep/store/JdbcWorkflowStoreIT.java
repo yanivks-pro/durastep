@@ -13,11 +13,13 @@ import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
+import io.github.yanivks_pro.durastep.runtime.Command.SetStatus;
 import io.github.yanivks_pro.durastep.runtime.Command.StartTimer;
 import io.github.yanivks_pro.durastep.runtime.Failure;
 import io.github.yanivks_pro.durastep.runtime.HistoryEntry;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
 import java.sql.Connection;
@@ -497,6 +499,53 @@ class JdbcWorkflowStoreIT {
                     frozen, new IllegalStateException("bug"), Duration.ofSeconds(1)))
         .isInstanceOf(StaleTaskException.class);
     assertThat(count("workflows WHERE blocked")).isZero();
+  }
+
+  @Test
+  void aSignalGoesToTheInboxOncePerRequestIdAndWakesTheDecider() throws SQLException {
+    store.start("exp-1", "Expense", ORDER);
+    ClaimedTask decide = claim(TaskKind.WORKFLOW);
+    store.commitDecision(decide, store.loadDecision(decide), List.of());
+
+    boolean first = store.signal("exp-1", "approval", new Payload("\"ana\""), "req-1");
+    boolean again = store.signal("exp-1", "approval", new Payload("\"ana\""), "req-1");
+
+    assertThat(first).isTrue();
+    assertThat(again).isFalse();
+    assertThat(count("inbox WHERE kind = 'SIGNAL' AND name = 'approval'")).isEqualTo(1);
+    assertThat(store.loadDecision(claim(TaskKind.WORKFLOW)).inbox())
+        .extracting(InboxEntry::event)
+        .containsExactly(new SignalReceived("approval", new Payload("\"ana\"")));
+  }
+
+  @Test
+  void aFinishedWorkflowCannotBeSignalled() {
+    store.start("exp-2", "Expense", ORDER);
+    ClaimedTask decide = claim(TaskKind.WORKFLOW);
+    store.commitDecision(
+        decide, store.loadDecision(decide), List.of(new FailWorkflow(new Failure("E", "done"))));
+
+    assertThatThrownBy(() -> store.signal("exp-2", "approval", new Payload("1"), "req-1"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("FAILED");
+  }
+
+  @Test
+  void aPublishedStatusIsSavedWithoutAddingToTheHistory() throws SQLException {
+    store.start("exp-3", "Expense", ORDER);
+    ClaimedTask decide = claim(TaskKind.WORKFLOW);
+
+    store.commitDecision(
+        decide,
+        store.loadDecision(decide),
+        List.of(
+            new SetStatus("waiting for approval"),
+            new ScheduleActivity(
+                "OrderActivities.chargeCard", CHARGE_ARGS, ActivityOptions.DEFAULT)));
+
+    assertThat(store.find("exp-3").orElseThrow().status()).isEqualTo("waiting for approval");
+    assertThat(eventTypes("exp-3")).containsExactly("WORKFLOW_STARTED", "ACTIVITY_SCHEDULED");
+    assertThat(count("workflows WHERE history_length = 2")).isEqualTo(1);
   }
 
   @Test

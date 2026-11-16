@@ -15,9 +15,16 @@ public sealed interface HistoryEvent {
 
   record ActivityFailed(int scheduledSeq, Failure failure, int attempts) implements HistoryEvent {}
 
-  record TimerStarted(Duration duration) implements HistoryEvent {}
+  record TimerStarted(Duration duration, String signal) implements HistoryEvent {
+
+    public TimerStarted(Duration duration) {
+      this(duration, null);
+    }
+  }
 
   record TimerFired(int startedSeq) implements HistoryEvent {}
+
+  record SignalReceived(String name, Payload payload) implements HistoryEvent {}
 
   record WorkflowCompleted(Payload result) implements HistoryEvent {}
 

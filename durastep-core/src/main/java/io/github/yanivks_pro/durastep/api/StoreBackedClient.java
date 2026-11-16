@@ -8,6 +8,7 @@ import io.github.yanivks_pro.durastep.store.StoredWorkflow;
 import java.lang.reflect.Type;
 import java.time.Duration;
 import java.util.Objects;
+import java.util.UUID;
 
 final class StoreBackedClient implements DurastepClient {
 
@@ -44,6 +45,22 @@ final class StoreBackedClient implements DurastepClient {
           "workflow " + workflowId + " already exists as " + started.type() + ", not " + type);
     }
     return newHandle(workflowId, workflowClass);
+  }
+
+  @Override
+  public void signal(String workflowId, String name, Object payload) {
+    signal(workflowId, name, payload, UUID.randomUUID().toString());
+  }
+
+  @Override
+  public boolean signal(String workflowId, String name, Object payload, String requestId) {
+    Objects.requireNonNull(workflowId, "workflowId");
+    Objects.requireNonNull(name, "name");
+    Objects.requireNonNull(requestId, "requestId");
+    if (store.find(workflowId).isEmpty()) {
+      throw new IllegalArgumentException("no workflow " + workflowId + " exists");
+    }
+    return store.signal(workflowId, name, converter.toPayload(payload), requestId);
   }
 
   @Override
