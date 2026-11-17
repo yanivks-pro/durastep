@@ -7,10 +7,13 @@ import io.github.yanivks_pro.durastep.store.StartResult;
 import io.github.yanivks_pro.durastep.store.StoredWorkflow;
 import java.lang.reflect.Type;
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
 final class StoreBackedClient implements DurastepClient {
+
+  static final Duration RESULT_POLL_INTERVAL = Duration.ofMillis(100);
 
   private final JdbcWorkflowStore store;
   private final PayloadConverter converter;
@@ -73,6 +76,27 @@ final class StoreBackedClient implements DurastepClient {
   }
 
   @Override
+  public List<WorkflowDescription> list(WorkflowQuery query) {
+    Objects.requireNonNull(query, "query");
+    return store
+        .list(query.stateFilter(), query.typeFilter(), query.blockedFilter(), query.maxResults())
+        .stream()
+        .map(StoreBackedClient::describe)
+        .toList();
+  }
+
+  static WorkflowDescription describe(StoredWorkflow workflow) {
+    return new WorkflowDescription(
+        workflow.id(),
+        workflow.type(),
+        workflow.state(),
+        workflow.status(),
+        workflow.blocked(),
+        workflow.startedAt(),
+        workflow.closedAt());
+  }
+
+  @Override
   public <O> WorkflowHandle<O> handle(
       String workflowId, Class<? extends Workflow<?, O>> workflowClass) {
     Objects.requireNonNull(workflowClass, "workflowClass");
@@ -91,7 +115,7 @@ final class StoreBackedClient implements DurastepClient {
 
   private <O> WorkflowHandle<O> newHandle(String workflowId, Class<?> workflowClass) {
     Type resultType = WorkflowTypes.outputOf(workflowClass);
-    return new StoreBackedHandle<>(workflowId, resultType, store, converter, pollInterval);
+    return new StoreBackedHandle<>(workflowId, resultType, this, store, converter, pollInterval);
   }
 
   private static void requireValidId(String workflowId) {

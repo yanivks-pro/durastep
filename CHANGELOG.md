@@ -4,6 +4,16 @@ All notable changes to Durastep are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `DurastepClient.connect(dataSource)` for applications that start, signal or watch workflows without
+  running workers.
+- `client.list(WorkflowQuery)` filters workflows by state, type and blocked, newest first.
+- `WorkflowHandle` can now `signal(...)` and `cancel()` its workflow, and `resultAsync()` waits without blocking.
+- `WorkflowDescription` includes when the workflow started and when it finished.
+
 ## [0.4.0] - 2026-11-16
 
 ### Added
