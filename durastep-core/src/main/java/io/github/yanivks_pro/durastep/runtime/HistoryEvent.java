@@ -40,6 +40,8 @@ public sealed interface HistoryEvent {
 
   record CancelRequested() implements HistoryEvent {}
 
+  record OperatorAction(String action, String by, String reason) implements HistoryEvent {}
+
   record WorkflowCompleted(Payload result) implements HistoryEvent {}
 
   record WorkflowCancelled() implements HistoryEvent {}

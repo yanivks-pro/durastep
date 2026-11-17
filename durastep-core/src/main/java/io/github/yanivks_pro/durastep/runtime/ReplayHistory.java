@@ -4,6 +4,7 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.CancelRequested;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.OperatorAction;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
@@ -92,6 +93,7 @@ record ReplayHistory(
         case TimerFired fired ->
             recordOutcome(entry, fired.startedSeq(), TimerStarted.class, stepsBySeq, outcomeBySeq);
         case SignalReceived ignored -> signals.add(entry);
+        case OperatorAction ignored -> {}
         case CancelRequested ignored -> {
           if (cancelRequest == null) {
             cancelRequest = entry;

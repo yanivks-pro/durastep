@@ -89,6 +89,16 @@ final class StoreBackedHandle<O> implements WorkflowHandle<O> {
   }
 
   @Override
+  public boolean retryNow(String reason) {
+    return client.retryNow(workflowId, reason);
+  }
+
+  @Override
+  public boolean terminate(String reason) {
+    return client.terminate(workflowId, reason);
+  }
+
+  @Override
   public O result(Duration timeout) throws TimeoutException, InterruptedException {
     long deadline = System.nanoTime() + timeout.toNanos();
     while (true) {
@@ -105,7 +115,13 @@ final class StoreBackedHandle<O> implements WorkflowHandle<O> {
         case FAILED ->
             throw new WorkflowFailedException(
                 workflowId, workflow.failure().type(), workflow.failure().message());
-        case CANCELLED -> throw new WorkflowCancelledException(workflowId);
+        case CANCELLED ->
+            throw new WorkflowCancelledException(
+                workflowId,
+                workflow.failure() != null
+                        && workflow.failure().type().equals(JdbcWorkflowStore.TERMINATED)
+                    ? workflow.failure().message()
+                    : null);
         case RUNNING -> {
           long remaining = deadline - System.nanoTime();
           if (remaining <= 0) {

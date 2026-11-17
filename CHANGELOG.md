@@ -13,6 +13,10 @@ All notable changes to Durastep are recorded here. The format follows
 - `client.list(WorkflowQuery)` filters workflows by state, type and blocked, newest first.
 - `WorkflowHandle` can now `signal(...)` and `cancel()` its workflow, and `resultAsync()` waits without blocking.
 - `WorkflowDescription` includes when the workflow started and when it finished.
+- Operator commands with an audit trail: `handle.retryNow(reason)`, `handle.terminate(reason)`,
+  `client.retryAllBlocked(reason)` and `client.rerun(id, reason)`. Each records who acted and why in the
+  workflow's history; `client.actingAs(name)` sets who, by default the operating system user. A terminated
+  workflow's `WorkflowCancelledException.reason()` says who terminated it and why.
 
 ## [0.4.0] - 2026-11-16
 

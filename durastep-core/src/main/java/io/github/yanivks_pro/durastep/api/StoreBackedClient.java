@@ -14,15 +14,72 @@ import java.util.UUID;
 final class StoreBackedClient implements DurastepClient {
 
   static final Duration RESULT_POLL_INTERVAL = Duration.ofMillis(100);
+  static final int MAX_REASON_LENGTH = 1_000;
 
   private final JdbcWorkflowStore store;
   private final PayloadConverter converter;
   private final Duration pollInterval;
+  private final String operator;
 
   StoreBackedClient(JdbcWorkflowStore store, PayloadConverter converter, Duration pollInterval) {
+    this(store, converter, pollInterval, System.getProperty("user.name", "unknown"));
+  }
+
+  private StoreBackedClient(
+      JdbcWorkflowStore store, PayloadConverter converter, Duration pollInterval, String operator) {
     this.store = store;
     this.converter = converter;
     this.pollInterval = pollInterval;
+    this.operator = operator;
+  }
+
+  @Override
+  public DurastepClient actingAs(String operator) {
+    Objects.requireNonNull(operator, "operator");
+    if (operator.isBlank()) {
+      throw new IllegalArgumentException("the operator's name must not be blank");
+    }
+    return new StoreBackedClient(store, converter, pollInterval, operator);
+  }
+
+  @Override
+  public int retryAllBlocked(String reason) {
+    requireReason(reason);
+    int retried = 0;
+    for (String workflowId : store.blockedWorkflows()) {
+      if (store.retryNow(workflowId, operator, reason)) {
+        retried++;
+      }
+    }
+    return retried;
+  }
+
+  @Override
+  public String rerun(String workflowId, String reason) {
+    Objects.requireNonNull(workflowId, "workflowId");
+    requireReason(reason);
+    return store.rerun(workflowId, operator, reason);
+  }
+
+  boolean retryNow(String workflowId, String reason) {
+    requireReason(reason);
+    return store.retryNow(workflowId, operator, reason);
+  }
+
+  boolean terminate(String workflowId, String reason) {
+    requireReason(reason);
+    return store.terminate(workflowId, operator, reason);
+  }
+
+  private static void requireReason(String reason) {
+    Objects.requireNonNull(reason, "reason");
+    if (reason.isBlank()) {
+      throw new IllegalArgumentException("a reason is required for the audit trail");
+    }
+    if (reason.length() > MAX_REASON_LENGTH) {
+      throw new IllegalArgumentException(
+          "a reason may have at most " + MAX_REASON_LENGTH + " characters");
+    }
   }
 
   @Override
