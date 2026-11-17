@@ -4,13 +4,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.yanivks_pro.durastep.api.AesGcmPayloadCodec;
+import io.github.yanivks_pro.durastep.api.PayloadCodec;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.api.WorkflowFailedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 class WorkflowReplayerTest {
 
@@ -222,6 +229,41 @@ class WorkflowReplayerTest {
     assertThatThrownBy(() -> WorkflowReplayer.of(Throws.class, Throws::new).replay("o", started))
         .hasMessageContaining(
             "o: the code now throws java.lang.IllegalStateException: a bug in the new version");
+  }
+
+  @Test
+  void encryptedHistoriesReplayWithTheCodecTheEnginesUse(@TempDir Path directory) throws Exception {
+    PayloadCodec codec =
+        AesGcmPayloadCodec.withKeys(Map.of("k1", AesGcmPayloadCodec.newKey()), "k1");
+    JsonMapper json = JsonMapper.builder().build();
+    ArrayNode events =
+        (ArrayNode) json.readTree(Files.readString(HISTORIES.resolve("order-1.json")));
+    for (JsonNode node : events) {
+      ObjectNode event = (ObjectNode) node;
+      switch (event.path("type").asString()) {
+        case "WORKFLOW_STARTED", "WORKFLOW_COMPLETED" ->
+            event.set("data", json.readTree(codec.encode(event.path("data").toString())));
+        case "ACTIVITY_SCHEDULED" ->
+            ((ObjectNode) event.path("data"))
+                .set(
+                    "arguments",
+                    json.readTree(codec.encode(event.path("data").path("arguments").toString())));
+        case "ACTIVITY_COMPLETED" ->
+            ((ObjectNode) event.path("data"))
+                .set(
+                    "result",
+                    json.readTree(codec.encode(event.path("data").path("result").toString())));
+        default -> {}
+      }
+    }
+    Files.writeString(directory.resolve("order-1.json"), events.toString());
+    WorkflowReplayer replayer = WorkflowReplayer.of(Before.Order.class, Before.Order::new);
+
+    assertThat(events.toString()).doesNotContain("ch_order-1");
+    assertThatCode(() -> replayer.withPayloadCodec(codec).replay(directory))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> replayer.replay(directory))
+        .hasMessageContaining("encrypted with key k1");
   }
 
   private static String history(String... events) {

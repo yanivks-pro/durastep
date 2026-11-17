@@ -13,6 +13,9 @@ All notable changes to Durastep are recorded here. The format follows
   change step numbers, and the CLI shows it in the timeline.
 - New module `durastep-testkit`: `WorkflowReplayer` replays histories saved with `durastep history <id> --json`
   against new code in a unit test, and reports every history the change would break.
+- Payload encryption: `PayloadCodec`, with `AesGcmPayloadCodec` as the reference. Inputs, arguments, results and
+  signals are stored as encrypted envelopes that name their key, so keys can be rotated while workflows run.
+  Engines, clients, the testkit and the Spring Boot starter take the codec; the CLI shows `[encrypted]`.
 
 ## [0.5.0] - 2026-11-17
 

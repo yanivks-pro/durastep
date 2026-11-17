@@ -1,10 +1,10 @@
 package io.github.yanivks_pro.durastep.api;
 
-import io.github.yanivks_pro.durastep.payload.JsonPayloadConverter;
 import io.github.yanivks_pro.durastep.payload.LimitedPayloadConverter;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import javax.sql.DataSource;
 
 /** Starts workflows and finds existing ones. Obtained from {@link DurastepEngine#client()}. */
@@ -35,8 +35,26 @@ public interface DurastepClient {
     Objects.requireNonNull(dataSource, "dataSource");
     return new StoreBackedClient(
         new JdbcWorkflowStore(dataSource, schema),
-        new LimitedPayloadConverter(
-            new JsonPayloadConverter(), LimitedPayloadConverter.DEFAULT_LIMIT),
+        DurastepEngine.converterFor(LimitedPayloadConverter.DEFAULT_LIMIT, Optional.empty()),
+        StoreBackedClient.RESULT_POLL_INTERVAL);
+  }
+
+  /**
+   * Connects to a Durastep database whose workflow data is encoded, for example encrypted, without
+   * running any workers. See {@link #connect(DataSource)}.
+   *
+   * @param dataSource where the workflows are stored
+   * @param schema the schema the engines use
+   * @param payloadCodec the codec the engines use
+   * @return a client for that schema
+   */
+  static DurastepClient connect(DataSource dataSource, String schema, PayloadCodec payloadCodec) {
+    Objects.requireNonNull(dataSource, "dataSource");
+    Objects.requireNonNull(payloadCodec, "payloadCodec");
+    return new StoreBackedClient(
+        new JdbcWorkflowStore(dataSource, schema),
+        DurastepEngine.converterFor(
+            LimitedPayloadConverter.DEFAULT_LIMIT, Optional.of(payloadCodec)),
         StoreBackedClient.RESULT_POLL_INTERVAL);
   }
 
