@@ -23,6 +23,9 @@ All notable changes to Durastep are recorded here. The format follows
   own steps, which are stored with the branch's ID.
 - `Promise.allOf(...)` and `Promise.anyOf(...)`; `anyOf` returns the branch that finished first in the history.
   Branches that only wait for each other block the workflow with a clear message.
+- Examples module with three runnable, tested applications: order processing (retries, idempotency), trip
+  booking (parallel branches, saga, cancellation) and expense approval (signals, status, timeouts, escalation).
+  `docker-compose.yml` starts a local Postgres for them.
 
 ## [0.3.0] - 2026-11-16
 

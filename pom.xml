@@ -22,6 +22,7 @@
 
   <modules>
     <module>durastep-core</module>
+    <module>durastep-examples</module>
   </modules>
 
   <properties>
@@ -60,6 +61,8 @@
     <maven-enforcer-plugin.version>3.7.0</maven-enforcer-plugin.version>
     <spotless-maven-plugin.version>3.10.4</spotless-maven-plugin.version>
     <jacoco-maven-plugin.version>0.8.16</jacoco-maven-plugin.version>
+    <exec-maven-plugin.version>3.6.4</exec-maven-plugin.version>
+    <exec.skip>true</exec.skip>
   </properties>
 
   <dependencyManagement>
@@ -77,6 +80,11 @@
         <version>${testcontainers.version}</version>
         <type>pom</type>
         <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.github.yanivks-pro</groupId>
+        <artifactId>durastep-core</artifactId>
+        <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>org.postgresql</groupId>
@@ -173,6 +181,11 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-failsafe-plugin</artifactId>
           <version>${maven-surefire-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>exec-maven-plugin</artifactId>
+          <version>${exec-maven-plugin.version}</version>
         </plugin>
       </plugins>
     </pluginManagement>
