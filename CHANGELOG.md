@@ -37,6 +37,9 @@ All notable changes to Durastep are recorded here. The format follows
   `stats`, `signal`, `cancel`, `terminate`, `retry-now` and `rerun`. Every command can print JSON; commands
   that change workflows ask for confirmation and record who acted and why. A Dockerfile builds an image.
 - `client.handle(id)` without a workflow class, and `handle.history()` and `handle.blockedError()`.
+- New module `durastep-spring-boot-starter` for Spring Boot 4: `@WorkflowDefinition` and
+  `@ActivityImplementation` beans, `durastep.*` properties, the application's `DataSource` and graceful shutdown,
+  a health indicator, automatic metrics, and a client-only mode.
 
 ### Fixed
 
