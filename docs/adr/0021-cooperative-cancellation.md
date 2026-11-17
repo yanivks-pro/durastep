@@ -20,7 +20,9 @@ Cancellation is a request that the workflow handles itself.
 - Workflow code receives a `CancelledException` at its **first wait point** after the request: an activity call,
   a sleep or a signal wait. The point is decided from the history: a result recorded before the request is
   returned normally, and a result recorded after it is ignored. When cancellation replaces a step that was not
-  yet scheduled, that step is not scheduled and does not take a step number, so cleanup steps replay exactly.
+  yet scheduled, that step is not scheduled and does not take a step number. On replay, a step recorded after
+  the request is therefore known to be cleanup: reaching it before the cancellation was delivered means the
+  cancellation is delivered there again, so cleanup steps replay exactly.
 - After that, code runs normally, so it can clean up with ordinary activities, which are retried and
   crash-safe. The workflow then ends **CANCELLED** whether it rethrows the exception or returns, unless it throws
   `WorkflowFailedException`, which makes it FAILED. `result()` throws `WorkflowCancelledException`.

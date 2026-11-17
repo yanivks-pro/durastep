@@ -92,6 +92,69 @@ class CancellationTest {
   }
 
   @Test
+  void cleanupScheduledInsteadOfTheNextStepReplaysWithoutAMismatch() {
+    History cancelledBetweenSteps =
+        History.startedWith(ORDER)
+            .scheduled("OrderActivities.chargeCard", "order-42", 4200)
+            .completed(2, "ch_1")
+            .cancelRequested()
+            .scheduled("OrderActivities.sendEmail", "refund order-42");
+
+    assertThat(decide(cancelledBetweenSteps)).isEmpty();
+    assertThat(decide(cancelledBetweenSteps.completed(5, null)))
+        .containsExactly(new CancelWorkflow());
+  }
+
+  @Test
+  void cleanupAfterACancelledTimedSignalWaitReplaysWithoutAMismatch() {
+    WorkflowDefinition<Order, String> waitsThenCleansUp =
+        new WorkflowDefinition<>(
+            "WaitsThenCleansUp",
+            Order.class,
+            () ->
+                (ctx, order) -> {
+                  try {
+                    return ctx.awaitSignal("go", String.class, Duration.ofHours(1)).orElse("late");
+                  } catch (CancelledException e) {
+                    ctx.sleep(Duration.ofMinutes(5));
+                    throw e;
+                  }
+                });
+    History cancelledBeforeWaiting =
+        History.startedWith(ORDER).cancelRequested().timerStarted(Duration.ofMinutes(5));
+
+    assertThat(runtime.decide(waitsThenCleansUp, "order-42", cancelledBeforeWaiting.entries()))
+        .isEmpty();
+    assertThat(
+            runtime.decide(
+                waitsThenCleansUp, "order-42", cancelledBeforeWaiting.timerFired(3).entries()))
+        .containsExactly(new CancelWorkflow());
+  }
+
+  @Test
+  void aSignalThatArrivedBeforeTheCancellationIsStillReceivedOnReplay() {
+    WorkflowDefinition<Order, String> waits =
+        new WorkflowDefinition<>(
+            "WaitsWithTimeout",
+            Order.class,
+            () ->
+                (ctx, order) -> {
+                  String answer =
+                      ctx.awaitSignal("go", String.class, Duration.ofHours(1)).orElse("late");
+                  ctx.sleep(Duration.ofMinutes(1));
+                  return answer;
+                });
+    History history =
+        History.startedWith(ORDER)
+            .signal("go", "yes")
+            .cancelRequested()
+            .timerStartedFor("go", Duration.ofHours(1));
+
+    assertThat(runtime.decide(waits, "order-42", history.entries()))
+        .containsExactly(new CancelWorkflow());
+  }
+
+  @Test
   void aSleepingWorkflowIsCancelledAtOnce() {
     WorkflowDefinition<Order, String> sleeps =
         new WorkflowDefinition<>(
