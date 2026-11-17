@@ -2,10 +2,12 @@ package io.github.yanivks_pro.durastep;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.awaitility.Awaitility.await;
 
 import io.github.yanivks_pro.durastep.api.DurastepClient;
 import io.github.yanivks_pro.durastep.api.DurastepEngine;
+import io.github.yanivks_pro.durastep.api.HistoryRecord;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowCancelledException;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
@@ -188,6 +190,27 @@ class ClientApiIT {
     assertThat(running.startedAt()).isAfter(before);
     assertThat(running.closedAt()).isNull();
     assertThat(finished.closedAt()).isAfterOrEqualTo(finished.startedAt());
+  }
+
+  @Test
+  void aHandleWithoutAClassShowsTheHistoryTheErrorAndThePlainResult() throws Exception {
+    startEngine();
+    DurastepClient client = engine.client();
+    client.start(Echo.class, "echo-1", "hello").result(WAIT);
+    client.start(Broken.class, "broken-1", "x");
+    await().atMost(WAIT).until(() -> client.handle("broken-1").describe().blocked());
+
+    WorkflowHandle<Object> echo = client.handle("echo-1");
+    WorkflowHandle<Object> broken = client.handle("broken-1");
+
+    assertThat(echo.result(WAIT)).isEqualTo("hello");
+    assertThat(echo.history())
+        .extracting(HistoryRecord::seq, HistoryRecord::type)
+        .containsExactly(tuple(1, "WORKFLOW_STARTED"), tuple(2, "WORKFLOW_COMPLETED"));
+    assertThat(echo.history().getLast().json()).isEqualTo("\"hello\"");
+    assertThat(echo.blockedError()).isEmpty();
+    assertThat(broken.blockedError()).contains("java.lang.IllegalStateException: a bug");
+    assertThatThrownBy(() -> client.handle("nope")).isInstanceOf(IllegalArgumentException.class);
   }
 
   private void startEngine() {

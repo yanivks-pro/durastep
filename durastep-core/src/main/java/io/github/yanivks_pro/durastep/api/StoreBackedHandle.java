@@ -5,6 +5,8 @@ import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import io.github.yanivks_pro.durastep.store.StoredWorkflow;
 import java.lang.reflect.Type;
 import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 
@@ -86,6 +88,16 @@ final class StoreBackedHandle<O> implements WorkflowHandle<O> {
   @Override
   public boolean cancel() {
     return client.cancel(workflowId);
+  }
+
+  @Override
+  public List<HistoryRecord> history() {
+    return store.history(workflowId);
+  }
+
+  @Override
+  public Optional<String> blockedError() {
+    return store.blockedError(workflowId);
   }
 
   @Override

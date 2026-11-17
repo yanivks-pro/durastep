@@ -33,6 +33,10 @@ All notable changes to Durastep are recorded here. The format follows
   timers, and the database's counts into gauges refreshed every ten seconds.
 - Prometheus and Grafana in `docker compose --profile observability`, with a ready-made Durastep dashboard,
   and a load generator in the examples (`-Dexample=load`) that serves its metrics on port 8081.
+- New module `durastep-cli`: a command-line tool, built as one runnable JAR, with `list`, `show`, `history`,
+  `stats`, `signal`, `cancel`, `terminate`, `retry-now` and `rerun`. Every command can print JSON; commands
+  that change workflows ask for confirmation and record who acted and why. A Dockerfile builds an image.
+- `client.handle(id)` without a workflow class, and `handle.history()` and `handle.blockedError()`.
 
 ### Fixed
 

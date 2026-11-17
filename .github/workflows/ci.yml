@@ -29,6 +29,11 @@ jobs:
           java-version: "25"
           cache: maven
       - run: ./mvnw -B -ntp verify -Dpostgres.image=${{ matrix.postgres }}
+      - name: Build and try the CLI image
+        if: matrix.postgres == 'postgres:16-alpine'
+        run: |
+          docker build -t durastep-cli:ci durastep-cli
+          docker run --rm durastep-cli:ci --version
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

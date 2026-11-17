@@ -1,6 +1,8 @@
 package io.github.yanivks_pro.durastep.api;
 
 import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 
@@ -100,4 +102,19 @@ public interface WorkflowHandle<O> {
    * @throws IllegalArgumentException if the reason is blank
    */
   boolean terminate(String reason);
+
+  /**
+   * Returns the workflow's history: every event recorded for it so far, oldest first.
+   *
+   * @return the events
+   */
+  List<HistoryRecord> history();
+
+  /**
+   * Returns the error that blocks this workflow, if it is blocked: the exception's type and
+   * message, as saved when the workflow last failed to make progress.
+   *
+   * @return the error, or empty if the workflow is not blocked
+   */
+  Optional<String> blockedError();
 }
