@@ -8,9 +8,10 @@ as intended.
 [![CI](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml/badge.svg)](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-> **v0.4: workflows that wait for people, run steps in parallel and undo their work.** They survive chaos too: in
-> a test that kills engines at random, nothing is lost and nothing is done twice. It is not ready for production
-> yet: see [Limits of v0.4](#limits-of-v04) and the [roadmap](#roadmap).
+> **v0.5: ready to operate.** A CLI to find and fix workflows, metrics with a Grafana dashboard, operator
+> commands with an audit trail, and a Spring Boot starter, on top of workflows that wait for people, run steps in
+> parallel and survive chaos: in a test that kills engines at random, nothing is lost and nothing is done twice.
+> It is not ready for production yet: see [Limits of v0.5](#limits-of-v05) and the [roadmap](#roadmap).
 
 ```java
 public final class OrderWorkflow implements Workflow<Order, Receipt> {
@@ -162,7 +163,8 @@ client.cancel("trip-9");
 ```
 
 Durastep is not on Maven Central yet. Build it with `./mvnw install` and depend on
-`io.github.yanivks-pro:durastep-core:0.4.0`. The engine creates its tables in a `durastep` schema on start.
+`io.github.yanivks-pro:durastep-core:0.5.0`, or on `durastep-spring-boot-starter` in a Spring Boot application.
+The engine creates its tables in a `durastep` schema on start.
 
 ## Try the examples
 
@@ -183,7 +185,53 @@ docker compose up -d --wait
 
 See [the examples](durastep-examples/README.md) for every scenario and sample output.
 
-## Features in v0.4
+## Operate it
+
+The [CLI](durastep-cli/README.md) talks straight to the database, so it works whether or not your application
+is running:
+
+```text
+$ durastep list --blocked
+ID          TYPE           STATE    BLOCKED  STARTED              STATUS
+order-1042  OrderWorkflow  RUNNING  yes      2026-11-17 10:02:11  charging the card
+
+$ durastep show order-1042                 # the error that blocks it, and a readable timeline
+$ durastep retry-now --all-blocked --reason "fix deployed in 1.4.2"
+$ durastep terminate order-1042 --reason "fraud"
+```
+
+Every command can print JSON. Commands that change workflows ask for confirmation and record who acted and why
+in the workflow's history; the same commands exist on the client: `retryNow`, `terminate`, `retryAllBlocked` and
+`rerun`.
+
+To watch it, start Prometheus and Grafana with the load generator from the examples:
+
+```bash
+docker compose --profile observability up -d --wait
+./mvnw -q -pl durastep-examples exec:java -Dexample=load
+open http://localhost:3000
+```
+
+The **Durastep** dashboard shows workflows started and finished, running and blocked workflows, waiting work and
+its age, activity attempts by outcome, latencies, timer lateness and takeovers. Every engine log line carries the
+workflow ID, activity and attempt in the MDC.
+
+## Spring Boot
+
+With the [starter](durastep-spring-boot-starter/README.md), two annotations and a few properties are enough:
+
+```java
+@WorkflowDefinition
+class OrderWorkflow implements Workflow<Order, Receipt> { … }   // a fresh instance per run, with injection
+
+@ActivityImplementation
+class ShopActivities implements Payments, Warehouse { … }      // registered for every interface
+```
+
+The engine uses the application's `DataSource`, stops during Spring's graceful shutdown, reports to
+`/actuator/health`, and records its metrics when a `MeterRegistry` is present.
+
+## Features in v0.5
 
 - **Workflows as plain Java**, with activities declared as ordinary interfaces.
 - **Durable history and replay:** finished steps return their saved result and are never run again.
@@ -229,12 +277,25 @@ See [the examples](durastep-examples/README.md) for every scenario and sample ou
 - **Parallel branches:** `ctx.async(...)` returns a `Promise`, and `Promise.allOf` and `Promise.anyOf` combine
   them. Branches' activities run at the same time, while their code takes turns and receives results in
   history order, so replay stays exact.
+- **Client API:** `DurastepClient.connect(dataSource)` works without workers; `list(WorkflowQuery)` filters by
+  state, type and blocked; handles signal, cancel, wait with `resultAsync()`, and show their history.
+- **Operator commands with an audit trail:** `retryNow`, `terminate`, `retryAllBlocked` and `rerun` record who
+  acted and why in the workflow's history, and work even on blocked workflows.
+- **Limits:** data larger than 256 KB is rejected with a tip; a history logs a warning at 10,000 events and is
+  blocked at 50,000.
+- **Retention:** finished workflows are deleted 30 days after they closed, in small batches and on one engine at
+  a time; running workflows are never deleted.
+- **Observability:** the workflow ID, activity and attempt in every engine log line; an `EngineListener` for
+  events; `client.stats()`; Micrometer meters in `durastep-micrometer`; a Grafana dashboard.
+- **CLI:** `list`, `show`, `history`, `stats`, `signal`, `cancel`, `terminate`, `retry-now` and `rerun`, as one
+  runnable JAR or a Docker image.
+- **Spring Boot starter:** annotations, `durastep.*` properties, graceful shutdown, health, metrics and a
+  client-only mode.
 
-## Limits of v0.4
+## Limits of v0.5
 
 - **Only the main workflow code can wait for signals**, not code in parallel branches.
-- **No CLI, metrics or Spring Boot starter yet** (M5), so blocked workflows are visible only in the database,
-  and there is no Maven Central release.
+- **No Maven Central release and no published CLI image yet**: build the JARs and the image from source.
 - **No workflow versioning yet** (M6): changing the steps of a workflow while instances of it are running makes
   them blocked with a mismatch.
 - **Notifications do not pass through PgBouncer in transaction mode**; behind it, engines fall back to polling
@@ -278,6 +339,14 @@ Every significant decision is recorded as an [Architecture Decision Record](docs
 - **Parallel steps on one logical thread.** Each branch numbers its own steps and receives results in history
   order; delivering them in turn order instead breaks replay in 142 of 300 random runs.
   [ADR-0022](docs/adr/0022-parallel-steps-on-one-logical-thread.md)
+- **Operator commands work directly on Postgres.** Retry, terminate and rerun work even when a workflow's decider
+  keeps failing; they take the same locks as decisions and fence out a decider in the middle of a step.
+  [ADR-0023](docs/adr/0023-operator-commands-work-directly-on-postgres.md)
+- **Retention and size limits.** Old finished workflows are deleted in small batches under an advisory lock;
+  oversized data and runaway histories are stopped with a clear next step.
+  [ADR-0024](docs/adr/0024-retention-and-size-limits.md)
+- **A Spring Boot starter in its own module.** Spring's dependency versions stay out of the core and the other
+  modules. [ADR-0025](docs/adr/0025-spring-boot-starter-module.md)
 - **The database guards the rules.** Constraints reject invalid states, such as a second decision task for the
   same workflow or a finished workflow without a finish time. [ADR-0007](docs/adr/0007-schema-migrations-with-flyway.md)
 
@@ -293,8 +362,17 @@ cd durastep
 
 `./mvnw verify` checks formatting, compiles with Error Prone, runs the unit, architecture and Postgres
 integration tests, including the crash, process-kill, zombie and outage tests, and fails if line coverage drops
-below 85%. It also runs every [example](durastep-examples/README.md) scenario end to end. `./mvnw verify -Pchaos`
+below 85% in any module. It also runs every [example](durastep-examples/README.md) scenario end to end, checks
+the CLI's output against recorded snapshots, and starts real Spring Boot applications. `./mvnw verify -Pchaos`
 runs the chaos test, which takes a few minutes.
+
+| Module | What it is |
+|---|---|
+| `durastep-core` | The engine, plain Java |
+| `durastep-micrometer` | Micrometer metrics |
+| `durastep-cli` | The command-line tool |
+| `durastep-spring-boot-starter` | Spring Boot 4 integration |
+| `durastep-examples` | Runnable examples and the load generator; not released |
 
 ## Roadmap
 
@@ -305,8 +383,8 @@ runs the chaos test, which takes a few minutes.
 | M2 Reliability (v0.2) | Retries, timeouts and durable timers that can sleep for days | ✅ Done |
 | M3 Distributed (v0.3) | Many instances, leases and fencing; chaos test with 0 lost and 0 duplicates | ✅ Done |
 | M4 Interaction (v0.4) | Signals, cancellation, sagas, parallel steps and runnable examples | ✅ Done |
-| M5 Operability (v0.5) | CLI, metrics and Grafana, Spring Boot starter | 🚧 Next |
-| M6 Safe evolution (v0.6) | Versioning, replay testing of new code, payload encryption | ⏳ Planned |
+| M5 Operability (v0.5) | CLI, metrics and Grafana, operator commands, retention, Spring Boot starter | ✅ Done |
+| M6 Safe evolution (v0.6) | Versioning, replay testing of new code, payload encryption | 🚧 Next |
 | M7 Showcase (v1.0) | Dashboard, tracing, benchmarks, complete documentation | ⏳ Planned |
 
 ## Non-goals
