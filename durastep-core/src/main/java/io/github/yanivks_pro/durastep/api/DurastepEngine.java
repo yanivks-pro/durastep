@@ -2,6 +2,7 @@ package io.github.yanivks_pro.durastep.api;
 
 import io.github.yanivks_pro.durastep.activity.ActivityRegistry;
 import io.github.yanivks_pro.durastep.activity.ActivityRuntime;
+import io.github.yanivks_pro.durastep.payload.EncryptingPayloadConverter;
 import io.github.yanivks_pro.durastep.payload.JsonPayloadConverter;
 import io.github.yanivks_pro.durastep.payload.LimitedPayloadConverter;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
@@ -62,7 +63,7 @@ public final class DurastepEngine implements AutoCloseable {
     this.schema = builder.schema;
     this.applyMigrations = builder.applyMigrations;
     PayloadConverter converter =
-        new LimitedPayloadConverter(new JsonPayloadConverter(), builder.maxPayloadSize);
+        converterFor(builder.maxPayloadSize, Optional.ofNullable(builder.payloadCodec));
     EngineListener listener = SafeEngineListener.around(builder.listener);
     JdbcWorkflowStore store = new JdbcWorkflowStore(dataSource, schema);
     this.worker =
@@ -158,6 +159,14 @@ public final class DurastepEngine implements AutoCloseable {
     }
   }
 
+  static PayloadConverter converterFor(int maxPayloadSize, Optional<PayloadCodec> codec) {
+    PayloadConverter limited =
+        new LimitedPayloadConverter(new JsonPayloadConverter(), maxPayloadSize);
+    return codec
+        .<PayloadConverter>map(found -> new EncryptingPayloadConverter(limited, found))
+        .orElse(limited);
+  }
+
   private static String newOwnerName() {
     byte[] random = new byte[4];
     ThreadLocalRandom.current().nextBytes(random);
@@ -177,6 +186,7 @@ public final class DurastepEngine implements AutoCloseable {
     private Duration shutdownGrace = Duration.ofSeconds(30);
     private int maxPayloadSize = LimitedPayloadConverter.DEFAULT_LIMIT;
     private EngineListener listener = EngineListener.NONE;
+    private PayloadCodec payloadCodec;
     private int historyWarnAt = Worker.Settings.DEFAULT_HISTORY_WARN_AT;
     private int historyLimit = Worker.Settings.DEFAULT_HISTORY_LIMIT;
     private Optional<Retention.Settings> retention =
@@ -356,6 +366,18 @@ public final class DurastepEngine implements AutoCloseable {
         throw new IllegalArgumentException("maxPayloadSize must be positive, was " + bytes);
       }
       this.maxPayloadSize = bytes;
+      return this;
+    }
+
+    /**
+     * Sets how workflow data is encoded before it is stored, for example encrypted with {@link
+     * AesGcmPayloadCodec}. Without a codec, data is stored as plain JSON.
+     *
+     * @param payloadCodec the codec
+     * @return this builder
+     */
+    public Builder payloadCodec(PayloadCodec payloadCodec) {
+      this.payloadCodec = Objects.requireNonNull(payloadCodec, "payloadCodec");
       return this;
     }
 

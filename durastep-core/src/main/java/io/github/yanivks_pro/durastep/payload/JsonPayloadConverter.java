@@ -23,7 +23,19 @@ public final class JsonPayloadConverter implements PayloadConverter {
 
   @Override
   public Object fromPayload(Payload payload, Type type) {
-    return mapper.readValue(payload.json(), mapper.constructType(type));
+    JsonNode tree = readUnencrypted(payload);
+    return mapper.treeToValue(tree, mapper.constructType(type));
+  }
+
+  private JsonNode readUnencrypted(Payload payload) {
+    JsonNode tree = mapper.readTree(payload.json());
+    if (tree.isObject() && tree.has("enc") && tree.has("key") && tree.has("data")) {
+      throw new IllegalStateException(
+          "this data is encrypted with key "
+              + tree.path("key").asString()
+              + "; give the engine or the client the PayloadCodec that encrypted it");
+    }
+    return tree;
   }
 
   @Override
@@ -33,7 +45,7 @@ public final class JsonPayloadConverter implements PayloadConverter {
 
   @Override
   public Object[] fromArguments(Payload arguments, Type[] types) {
-    JsonNode array = mapper.readTree(arguments.json());
+    JsonNode array = readUnencrypted(arguments);
     if (!array.isArray() || array.size() != types.length) {
       throw new IllegalArgumentException(
           "expected a JSON array of " + types.length + " arguments, got " + arguments.json());

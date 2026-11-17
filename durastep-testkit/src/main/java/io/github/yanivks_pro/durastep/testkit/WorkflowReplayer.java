@@ -1,8 +1,11 @@
 package io.github.yanivks_pro.durastep.testkit;
 
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
+import io.github.yanivks_pro.durastep.api.PayloadCodec;
 import io.github.yanivks_pro.durastep.api.Workflow;
+import io.github.yanivks_pro.durastep.payload.EncryptingPayloadConverter;
 import io.github.yanivks_pro.durastep.payload.JsonPayloadConverter;
+import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.Command;
 import io.github.yanivks_pro.durastep.runtime.Command.CancelWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
@@ -64,10 +67,29 @@ public final class WorkflowReplayer {
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private final WorkflowDefinition<?, ?> definition;
-  private final WorkflowRuntime runtime = new WorkflowRuntime(new JsonPayloadConverter());
+  private final Optional<PayloadCodec> codec;
+  private final WorkflowRuntime runtime;
 
-  private WorkflowReplayer(WorkflowDefinition<?, ?> definition) {
+  private WorkflowReplayer(WorkflowDefinition<?, ?> definition, Optional<PayloadCodec> codec) {
     this.definition = definition;
+    this.codec = codec;
+    this.runtime =
+        new WorkflowRuntime(
+            codec
+                .<PayloadConverter>map(
+                    found -> new EncryptingPayloadConverter(new JsonPayloadConverter(), found))
+                .orElseGet(JsonPayloadConverter::new));
+  }
+
+  /**
+   * Returns a replayer that reads encoded histories, for example encrypted with {@link
+   * io.github.yanivks_pro.durastep.api.AesGcmPayloadCodec}, with the codec the engines use.
+   *
+   * @param payloadCodec the codec
+   * @return a replayer that decodes with it
+   */
+  public WorkflowReplayer withPayloadCodec(PayloadCodec payloadCodec) {
+    return new WorkflowReplayer(definition, Optional.of(Objects.requireNonNull(payloadCodec)));
   }
 
   /**
@@ -82,7 +104,7 @@ public final class WorkflowReplayer {
    */
   public static <I, O, W extends Workflow<I, O>> WorkflowReplayer of(
       Class<W> workflowClass, Supplier<W> factory) {
-    return new WorkflowReplayer(WorkflowDefinition.of(workflowClass, factory));
+    return new WorkflowReplayer(WorkflowDefinition.of(workflowClass, factory), Optional.empty());
   }
 
   /**
@@ -179,10 +201,9 @@ public final class WorkflowReplayer {
     return sameEnding(name, last, commands);
   }
 
-  private static Optional<String> sameEnding(
-      String name, HistoryEntry last, List<Command> commands) {
+  private Optional<String> sameEnding(String name, HistoryEntry last, List<Command> commands) {
     return switch (last.event()) {
-      case WorkflowCompleted completed -> sameResult(name, completed, commands);
+      case WorkflowCompleted completed -> sameResult(name, completed, commands, codec);
       case WorkflowFailed ignored ->
           commands.stream().anyMatch(FailWorkflow.class::isInstance)
               ? Optional.empty()
@@ -199,11 +220,14 @@ public final class WorkflowReplayer {
   }
 
   private static Optional<String> sameResult(
-      String name, WorkflowCompleted completed, List<Command> commands) {
+      String name,
+      WorkflowCompleted completed,
+      List<Command> commands,
+      Optional<PayloadCodec> codec) {
     for (Command command : commands) {
       if (command instanceof CompleteWorkflow complete) {
-        JsonNode expected = JSON.readTree(completed.result().json());
-        JsonNode actual = JSON.readTree(complete.result().json());
+        JsonNode expected = JSON.readTree(decoded(completed.result().json(), codec));
+        JsonNode actual = JSON.readTree(decoded(complete.result().json(), codec));
         return expected.equals(actual)
             ? Optional.empty()
             : Optional.of(
@@ -216,6 +240,10 @@ public final class WorkflowReplayer {
     }
     return Optional.of(
         name + ": completed in the history, but the code now does " + describe(commands));
+  }
+
+  private static String decoded(String json, Optional<PayloadCodec> codec) {
+    return codec.map(found -> found.decode(json)).orElse(json);
   }
 
   private static String describe(List<Command> commands) {

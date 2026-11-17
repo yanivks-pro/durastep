@@ -31,3 +31,4 @@ for the rules, and [the template](0000-template.md) for the format.
 | [0024](0024-retention-and-size-limits.md) | Retention and size limits | Accepted |
 | [0025](0025-spring-boot-starter-module.md) | A Spring Boot starter module | Accepted |
 | [0026](0026-versioning-markers.md) | Versioning with markers in the history | Accepted |
+| [0027](0027-pluggable-payload-encryption.md) | Pluggable payload encryption | Accepted |

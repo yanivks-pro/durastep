@@ -3,6 +3,7 @@ package io.github.yanivks_pro.durastep.spring;
 import io.github.yanivks_pro.durastep.api.DurastepClient;
 import io.github.yanivks_pro.durastep.api.DurastepEngine;
 import io.github.yanivks_pro.durastep.api.EngineListener;
+import io.github.yanivks_pro.durastep.api.PayloadCodec;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.micrometer.DurastepMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -42,7 +43,8 @@ public final class DurastepAutoConfiguration {
       DataSource dataSource,
       DurastepProperties properties,
       ApplicationContext context,
-      ObjectProvider<EngineListener> listeners) {
+      ObjectProvider<EngineListener> listeners,
+      ObjectProvider<PayloadCodec> codec) {
     DurastepEngine.Builder builder =
         DurastepEngine.builder()
             .dataSource(dataSource)
@@ -57,6 +59,7 @@ public final class DurastepAutoConfiguration {
             .historyLimits(properties.history().warnAt(), properties.history().limit())
             .listener(CompositeEngineListener.of(listeners.orderedStream().toList()));
     properties.retentionPeriod().ifPresentOrElse(builder::retention, builder::noRetention);
+    codec.ifAvailable(builder::payloadCodec);
     registerWorkflows(builder, context);
     registerActivities(builder, context);
     return builder.build();
@@ -64,10 +67,17 @@ public final class DurastepAutoConfiguration {
 
   @Bean
   DurastepClient durastepClient(
-      ObjectProvider<DurastepEngine> engine, DataSource dataSource, DurastepProperties properties) {
+      ObjectProvider<DurastepEngine> engine,
+      DataSource dataSource,
+      DurastepProperties properties,
+      ObjectProvider<PayloadCodec> codec) {
     DurastepEngine running = engine.getIfAvailable();
-    return running != null
-        ? running.client()
+    if (running != null) {
+      return running.client();
+    }
+    PayloadCodec found = codec.getIfAvailable();
+    return found != null
+        ? DurastepClient.connect(dataSource, properties.schema(), found)
         : DurastepClient.connect(dataSource, properties.schema());
   }
 

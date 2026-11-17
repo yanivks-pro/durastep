@@ -39,7 +39,26 @@ final class Output {
   }
 
   static String compact(String json) {
-    return COMPACT.writeValueAsString(parse(json));
+    return COMPACT.writeValueAsString(withoutEncryptedData(parse(json)));
+  }
+
+  static JsonNode withoutEncryptedData(JsonNode node) {
+    if (node.isObject() && node.has("enc") && node.has("key") && node.has("data")) {
+      return JSON.getNodeFactory().stringNode("[encrypted]");
+    }
+    if (node instanceof ObjectNode object) {
+      ObjectNode copy = JSON.createObjectNode();
+      object
+          .properties()
+          .forEach(field -> copy.set(field.getKey(), withoutEncryptedData(field.getValue())));
+      return copy;
+    }
+    if (node instanceof ArrayNode array) {
+      ArrayNode copy = JSON.createArrayNode();
+      array.forEach(element -> copy.add(withoutEncryptedData(element)));
+      return copy;
+    }
+    return node;
   }
 
   static void print(Io io, JsonNode json) {

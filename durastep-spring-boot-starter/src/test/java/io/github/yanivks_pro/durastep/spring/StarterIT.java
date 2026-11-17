@@ -4,10 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import io.github.yanivks_pro.durastep.api.ActivityOutcome;
+import io.github.yanivks_pro.durastep.api.AesGcmPayloadCodec;
 import io.github.yanivks_pro.durastep.api.DurastepClient;
 import io.github.yanivks_pro.durastep.api.DurastepEngine;
 import io.github.yanivks_pro.durastep.api.EngineListener;
 import io.github.yanivks_pro.durastep.api.HistoryRecord;
+import io.github.yanivks_pro.durastep.api.PayloadCodec;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
@@ -15,10 +17,12 @@ import io.github.yanivks_pro.durastep.micrometer.DurastepMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -287,6 +291,32 @@ class StarterIT {
   }
 
   @Test
+  void aPayloadCodecBeanEncryptsTheWorkflowsData() {
+    app.withBean(
+            PayloadCodec.class,
+            () -> AesGcmPayloadCodec.withKeys(Map.of("k1", AesGcmPayloadCodec.newKey()), "k1"))
+        .run(
+            context -> {
+              String result =
+                  context
+                      .getBean(DurastepClient.class)
+                      .start(OrderWorkflow.class, "order-7", "order-7")
+                      .result(WAIT);
+              assertThat(result).isEqualTo("ch_order-7 for 700 cents");
+              try (Connection connection = dataSource.getConnection();
+                  Statement statement = connection.createStatement();
+                  ResultSet row =
+                      statement.executeQuery(
+                          "SELECT input::text, result::text FROM durastep.workflows"
+                              + " WHERE id = 'order-7'")) {
+                row.next();
+                assertThat(row.getString(1)).contains("\"enc\"").doesNotContain("order-7");
+                assertThat(row.getString(2)).contains("\"enc\"").doesNotContain("cents");
+              }
+            });
+  }
+
+  @Test
   void invalidSettingsStopTheApplicationFromStarting() {
     app.withPropertyValues("durastep.workflow-concurrency=0")
         .run(
@@ -334,7 +364,7 @@ class StarterIT {
   private static boolean inboxHasResultFor(String workflowId) throws SQLException {
     try (Connection connection = dataSource.getConnection();
         Statement statement = connection.createStatement();
-        java.sql.ResultSet row =
+        ResultSet row =
             statement.executeQuery(
                 "SELECT count(*) FROM durastep.inbox WHERE workflow_id = '"
                     + workflowId
