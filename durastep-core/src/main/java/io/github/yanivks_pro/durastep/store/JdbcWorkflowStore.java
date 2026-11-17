@@ -359,8 +359,7 @@ public final class JdbcWorkflowStore {
                 connection, "DELETE FROM " + tasks + " WHERE workflow_id = ?", task.workflowId());
             update(
                 connection, "DELETE FROM " + inbox + " WHERE workflow_id = ?", task.workflowId());
-            update(
-                connection, "DELETE FROM " + timers + " WHERE workflow_id = ?", task.workflowId());
+            deleteTimersNotBeingFired(connection, task.workflowId());
           } else if (rerun) {
             update(
                 connection,
@@ -464,9 +463,14 @@ public final class JdbcWorkflowStore {
     return transactions.inTransaction(
         "schedule a retry of activity " + task.activitySeq() + " of workflow " + task.workflowId(),
         connection -> {
+          boolean outOfTime =
+              totalTimeout.isPresent()
+                  && retryWouldEndTooLate(connection, task, delay, totalTimeout.get());
+          if (outOfTime) {
+            wakeDecider(connection, task.workflowId());
+          }
           fence(connection, task);
-          if (totalTimeout.isPresent()
-              && retryWouldEndTooLate(connection, task, delay, totalTimeout.get())) {
+          if (outOfTime) {
             saveFinalOutcome(connection, task, new Failed(failure, false));
             return false;
           }
@@ -489,6 +493,7 @@ public final class JdbcWorkflowStore {
     transactions.inTransaction(
         "save the result of activity " + task.activitySeq() + " of workflow " + task.workflowId(),
         connection -> {
+          wakeDecider(connection, task.workflowId());
           fence(connection, task);
           saveFinalOutcome(connection, task, result);
           return null;
@@ -518,6 +523,7 @@ public final class JdbcWorkflowStore {
       throws SQLException {
     update(connection, "DELETE FROM " + tasks + " WHERE id = ?", task.id());
     if (stateOf(connection, task.workflowId()) != WorkflowState.RUNNING) {
+      forgetDecider(connection, task.workflowId());
       return;
     }
     HistoryEvent outcome =
@@ -537,14 +543,6 @@ public final class JdbcWorkflowStore {
         codec.payloadOf(outcome),
         "activity-" + task.activitySeq());
     crashPoints.reached(CrashPoint.MID_ACTIVITY_COMPLETE);
-    update(
-        connection,
-        "INSERT INTO "
-            + tasks
-            + " (workflow_id, kind) VALUES (?, 'WORKFLOW')"
-            + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
-            + " DO UPDATE SET needs_rerun = true",
-        task.workflowId());
     notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
   }
 
@@ -570,6 +568,9 @@ public final class JdbcWorkflowStore {
               }
             }
           }
+          if (!fired.isEmpty()) {
+            crashPoints.reached(CrashPoint.MID_TIMER_FIRE);
+          }
           for (int i = 0; i < fired.size(); i++) {
             update(
                 connection,
@@ -581,15 +582,17 @@ public final class JdbcWorkflowStore {
                 codec.typeOf(fired.get(i)),
                 codec.payloadOf(fired.get(i)),
                 "timer-" + fired.get(i).startedSeq());
-            update(
-                connection,
-                "INSERT INTO "
-                    + tasks
-                    + " (workflow_id, kind) VALUES (?, 'WORKFLOW')"
-                    + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
-                    + " DO UPDATE SET needs_rerun = true",
-                workflowIds.get(i));
-            notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
+            wakeDecider(connection, workflowIds.get(i));
+            if (stateOf(connection, workflowIds.get(i)) != WorkflowState.RUNNING) {
+              update(
+                  connection,
+                  "DELETE FROM " + inbox + " WHERE workflow_id = ? AND request_id = ?",
+                  workflowIds.get(i),
+                  "timer-" + fired.get(i).startedSeq());
+              forgetDecider(connection, workflowIds.get(i));
+            } else {
+              notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
+            }
           }
           return fired.size();
         });
@@ -661,6 +664,25 @@ public final class JdbcWorkflowStore {
         });
   }
 
+  private void forgetDecider(Connection connection, String workflowId) throws SQLException {
+    update(
+        connection,
+        "DELETE FROM " + tasks + " WHERE workflow_id = ? AND kind = 'WORKFLOW'",
+        workflowId);
+  }
+
+  private void deleteTimersNotBeingFired(Connection connection, String workflowId)
+      throws SQLException {
+    update(
+        connection,
+        "DELETE FROM "
+            + timers
+            + " WHERE id IN (SELECT id FROM "
+            + timers
+            + " WHERE workflow_id = ? FOR UPDATE SKIP LOCKED)",
+        workflowId);
+  }
+
   private void wakeDecider(Connection connection, String workflowId) throws SQLException {
     update(
         connection,
@@ -700,7 +722,7 @@ public final class JdbcWorkflowStore {
               workflowId);
           update(connection, "DELETE FROM " + tasks + " WHERE workflow_id = ?", workflowId);
           update(connection, "DELETE FROM " + inbox + " WHERE workflow_id = ?", workflowId);
-          update(connection, "DELETE FROM " + timers + " WHERE workflow_id = ?", workflowId);
+          deleteTimersNotBeingFired(connection, workflowId);
           return true;
         });
   }
