@@ -1,0 +1,7 @@
+{
+  "running" : 2,
+  "blocked" : 1,
+  "waitingDecisions" : 0,
+  "oldestWaitingMillis" : "<varies>",
+  "waitingActivities" : { }
+}

@@ -118,6 +118,17 @@ public interface DurastepClient {
   boolean cancel(String workflowId);
 
   /**
+   * Returns a handle to an existing workflow without knowing its class, for tools such as the
+   * command-line interface. Its {@link WorkflowHandle#result} returns plain JSON values: maps,
+   * lists, strings, numbers, booleans or {@code null}.
+   *
+   * @param workflowId the workflow's business ID
+   * @return a handle to the workflow
+   * @throws IllegalArgumentException if no workflow with this ID exists
+   */
+  WorkflowHandle<Object> handle(String workflowId);
+
+  /**
    * Returns the workflows that match a query, newest first.
    *
    * @param query which workflows to return and how many

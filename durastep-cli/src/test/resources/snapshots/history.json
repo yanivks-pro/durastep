@@ -1,0 +1,36 @@
+[ {
+  "seq" : 1,
+  "at" : "<varies>",
+  "type" : "WORKFLOW_STARTED",
+  "data" : "order-1"
+}, {
+  "seq" : 2,
+  "at" : "<varies>",
+  "type" : "ACTIVITY_SCHEDULED",
+  "data" : {
+    "options" : {
+      "retry" : {
+        "maxBackoff" : "PT1M",
+        "maxAttempts" : 5,
+        "nonRetryable" : [ ],
+        "initialBackoff" : "PT1S"
+      },
+      "attemptTimeout" : "PT1M"
+    },
+    "activity" : "Shop.charge",
+    "arguments" : [ "order-1" ]
+  }
+}, {
+  "seq" : 3,
+  "at" : "<varies>",
+  "type" : "ACTIVITY_COMPLETED",
+  "data" : {
+    "result" : "ch_order-1",
+    "scheduledSeq" : 2
+  }
+}, {
+  "seq" : 4,
+  "at" : "<varies>",
+  "type" : "WORKFLOW_COMPLETED",
+  "data" : "ch_order-1"
+} ]

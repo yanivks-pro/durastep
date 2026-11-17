@@ -1,0 +1,33 @@
+{
+  "workflow" : {
+    "id" : "order-1",
+    "type" : "Order",
+    "state" : "COMPLETED",
+    "blocked" : false,
+    "status" : "charged",
+    "startedAt" : "<varies>",
+    "closedAt" : "<varies>"
+  },
+  "error" : null,
+  "timeline" : [ {
+    "seq" : 1,
+    "at" : "<varies>",
+    "type" : "WORKFLOW_STARTED",
+    "summary" : "started"
+  }, {
+    "seq" : 2,
+    "at" : "<varies>",
+    "type" : "ACTIVITY_SCHEDULED",
+    "summary" : "scheduled Shop.charge"
+  }, {
+    "seq" : 3,
+    "at" : "<varies>",
+    "type" : "ACTIVITY_COMPLETED",
+    "summary" : "Shop.charge completed"
+  }, {
+    "seq" : 4,
+    "at" : "<varies>",
+    "type" : "WORKFLOW_COMPLETED",
+    "summary" : "completed"
+  } ]
+}

@@ -4,6 +4,7 @@ import io.github.yanivks_pro.durastep.activity.ActivityResult;
 import io.github.yanivks_pro.durastep.activity.ActivityResult.Completed;
 import io.github.yanivks_pro.durastep.activity.ActivityResult.Failed;
 import io.github.yanivks_pro.durastep.api.EngineStats;
+import io.github.yanivks_pro.durastep.api.HistoryRecord;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
 import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.runtime.Command;
@@ -884,6 +885,52 @@ public final class JdbcWorkflowStore {
             : Optional.empty();
       }
     }
+  }
+
+  public List<HistoryRecord> history(String workflowId) {
+    return transactions.inTransaction(
+        "read the history of workflow " + workflowId,
+        connection -> {
+          List<HistoryRecord> records = new ArrayList<>();
+          try (PreparedStatement statement =
+              connection.prepareStatement(
+                  "SELECT seq, event_type, created_at, payload::text FROM "
+                      + history
+                      + " WHERE workflow_id = ? ORDER BY seq")) {
+            statement.setString(1, workflowId);
+            try (ResultSet row = statement.executeQuery()) {
+              while (row.next()) {
+                String payload = row.getString(4);
+                records.add(
+                    new HistoryRecord(
+                        row.getInt(1),
+                        row.getString(2),
+                        row.getTimestamp(3).toInstant(),
+                        payload == null ? "{}" : payload));
+              }
+            }
+          }
+          return records;
+        });
+  }
+
+  public Optional<String> blockedError(String workflowId) {
+    return transactions.inTransaction(
+        "read the error of workflow " + workflowId,
+        connection -> {
+          try (PreparedStatement statement =
+              connection.prepareStatement(
+                  "SELECT blocked_error->>'type', blocked_error->>'message' FROM "
+                      + workflows
+                      + " WHERE id = ? AND blocked AND blocked_error IS NOT NULL")) {
+            statement.setString(1, workflowId);
+            try (ResultSet row = statement.executeQuery()) {
+              return row.next()
+                  ? Optional.of(row.getString(1) + ": " + row.getString(2))
+                  : Optional.empty();
+            }
+          }
+        });
   }
 
   public EngineStats stats() {
