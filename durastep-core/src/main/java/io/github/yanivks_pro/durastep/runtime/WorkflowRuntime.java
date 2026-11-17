@@ -45,6 +45,14 @@ public final class WorkflowRuntime {
       throw new WorkflowBlockedException(
           workflowId, new IllegalStateException(CAUGHT_SUSPENSION, outcome.thrownAfterCatch()));
     }
+    if (!outcome.deadlocked().isEmpty()) {
+      throw new WorkflowBlockedException(
+          workflowId,
+          new IllegalStateException(
+              "workflow code is stuck: branches "
+                  + String.join(", ", outcome.deadlocked())
+                  + " are only waiting for each other"));
+    }
     if (!outcome.mainFinished()) {
       return withStatus(ctx, ctx.newCommands());
     }

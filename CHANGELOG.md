@@ -21,6 +21,8 @@ All notable changes to Durastep are recorded here. The format follows
 - Parallel branches: `ctx.async(...)` returns a `Promise`; branches' activities run at the same time, while
   their code takes turns on one logical thread and receives results in history order. Each branch numbers its
   own steps, which are stored with the branch's ID.
+- `Promise.allOf(...)` and `Promise.anyOf(...)`; `anyOf` returns the branch that finished first in the history.
+  Branches that only wait for each other block the workflow with a clear message.
 
 ## [0.3.0] - 2026-11-16
 
