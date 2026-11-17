@@ -22,6 +22,7 @@
 
   <modules>
     <module>durastep-core</module>
+    <module>durastep-micrometer</module>
     <module>durastep-examples</module>
   </modules>
 
@@ -41,6 +42,8 @@
     <flyway.version>13.12.0</flyway.version>
     <jackson.version>3.2.4</jackson.version>
     <slf4j.version>2.0.20</slf4j.version>
+    <logback.version>1.6.6</logback.version>
+    <micrometer.version>1.17.2</micrometer.version>
 
     <junit.version>6.1.3</junit.version>
     <assertj.version>3.27.7</assertj.version>
@@ -115,6 +118,16 @@
         <groupId>org.slf4j</groupId>
         <artifactId>slf4j-simple</artifactId>
         <version>${slf4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.micrometer</groupId>
+        <artifactId>micrometer-core</artifactId>
+        <version>${micrometer.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>ch.qos.logback</groupId>
+        <artifactId>logback-classic</artifactId>
+        <version>${logback.version}</version>
       </dependency>
       <dependency>
         <groupId>org.assertj</groupId>

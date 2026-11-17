@@ -380,7 +380,7 @@ class JdbcWorkflowStoreIT {
                     + " AND fire_at BETWEEN now() + interval '3 days' - interval '1 minute'"
                     + " AND now() + interval '3 days' + interval '1 minute'"))
         .isEqualTo(1);
-    assertThat(store.fireDueTimers(100)).isZero();
+    assertThat(store.fireDueTimers(100)).isEmpty();
     assertThat(count("tasks")).isZero();
   }
 
@@ -392,11 +392,12 @@ class JdbcWorkflowStoreIT {
         decide, store.loadDecision(decide), List.of(new StartTimer(Duration.ofDays(3))));
     execute("UPDATE durastep.timers SET fire_at = now() - interval '1 second'");
 
-    int firstPass = store.fireDueTimers(100);
-    int secondPass = store.fireDueTimers(100);
+    List<Duration> firstPass = store.fireDueTimers(100);
+    List<Duration> secondPass = store.fireDueTimers(100);
 
-    assertThat(firstPass).isEqualTo(1);
-    assertThat(secondPass).isZero();
+    assertThat(firstPass).singleElement().satisfies(late -> assertThat(late).isPositive());
+    assertThat(firstPass.getFirst()).isGreaterThanOrEqualTo(Duration.ofMillis(900));
+    assertThat(secondPass).isEmpty();
     assertThat(count("timers")).isZero();
     assertThat(store.loadDecision(claim(TaskKind.WORKFLOW)).inbox())
         .extracting(InboxEntry::event)

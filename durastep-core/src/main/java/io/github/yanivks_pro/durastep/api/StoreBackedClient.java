@@ -20,17 +20,36 @@ final class StoreBackedClient implements DurastepClient {
   private final PayloadConverter converter;
   private final Duration pollInterval;
   private final String operator;
+  private final EngineListener listener;
 
   StoreBackedClient(JdbcWorkflowStore store, PayloadConverter converter, Duration pollInterval) {
-    this(store, converter, pollInterval, System.getProperty("user.name", "unknown"));
+    this(store, converter, pollInterval, EngineListener.NONE);
+  }
+
+  StoreBackedClient(
+      JdbcWorkflowStore store,
+      PayloadConverter converter,
+      Duration pollInterval,
+      EngineListener listener) {
+    this(store, converter, pollInterval, System.getProperty("user.name", "unknown"), listener);
   }
 
   private StoreBackedClient(
-      JdbcWorkflowStore store, PayloadConverter converter, Duration pollInterval, String operator) {
+      JdbcWorkflowStore store,
+      PayloadConverter converter,
+      Duration pollInterval,
+      String operator,
+      EngineListener listener) {
     this.store = store;
     this.converter = converter;
     this.pollInterval = pollInterval;
     this.operator = operator;
+    this.listener = listener;
+  }
+
+  @Override
+  public EngineStats stats() {
+    return store.stats();
   }
 
   @Override
@@ -39,7 +58,7 @@ final class StoreBackedClient implements DurastepClient {
     if (operator.isBlank()) {
       throw new IllegalArgumentException("the operator's name must not be blank");
     }
-    return new StoreBackedClient(store, converter, pollInterval, operator);
+    return new StoreBackedClient(store, converter, pollInterval, operator, listener);
   }
 
   @Override
@@ -68,7 +87,14 @@ final class StoreBackedClient implements DurastepClient {
 
   boolean terminate(String workflowId, String reason) {
     requireReason(reason);
-    return store.terminate(workflowId, operator, reason);
+    boolean terminated = store.terminate(workflowId, operator, reason);
+    if (terminated) {
+      store
+          .find(workflowId)
+          .ifPresent(
+              workflow -> listener.workflowFinished(workflow.type(), WorkflowState.CANCELLED));
+    }
+    return terminated;
   }
 
   private static void requireReason(String reason) {
@@ -103,6 +129,9 @@ final class StoreBackedClient implements DurastepClient {
     if (!started.type().equals(type)) {
       throw new IllegalArgumentException(
           "workflow " + workflowId + " already exists as " + started.type() + ", not " + type);
+    }
+    if (started.created()) {
+      listener.workflowStarted(type);
     }
     return newHandle(workflowId, workflowClass);
   }

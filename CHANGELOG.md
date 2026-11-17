@@ -23,6 +23,14 @@ All notable changes to Durastep are recorded here. The format follows
 - Retention: finished workflows are deleted 30 days after they closed (`retention` on the builder), with their
   history, in small batches and by one engine at a time. Running workflows are never deleted, and
   `noRetention()` keeps everything.
+- Every engine log line carries the workflow ID, and activity log lines also the activity and attempt, in the
+  SLF4J MDC (`workflowId`, `activity`, `attempt`); the same values are set for log lines inside activities.
+- `EngineListener` (`builder.listener(...)`) receives the engine's events: workflows started and finished,
+  decisions, activity attempts, timer lateness, lease takeovers and rejected late results. A listener that
+  throws never affects a workflow.
+- `client.stats()` counts running and blocked workflows and waiting work, with the age of the oldest.
+- New module `durastep-micrometer`: `DurastepMetrics` turns the engine's events into Micrometer counters and
+  timers, and the database's counts into gauges refreshed every ten seconds.
 
 ### Fixed
 

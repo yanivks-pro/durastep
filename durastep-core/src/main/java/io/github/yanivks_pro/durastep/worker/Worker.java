@@ -5,9 +5,17 @@ import io.github.yanivks_pro.durastep.activity.ActivityResult.Failed;
 import io.github.yanivks_pro.durastep.activity.ActivityRuntime;
 import io.github.yanivks_pro.durastep.activity.Backoff;
 import io.github.yanivks_pro.durastep.api.ActivityOptions;
+import io.github.yanivks_pro.durastep.api.ActivityOutcome;
+import io.github.yanivks_pro.durastep.api.ActivityTimeoutException;
+import io.github.yanivks_pro.durastep.api.EngineListener;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.RetryPolicy;
+import io.github.yanivks_pro.durastep.api.WorkKind;
+import io.github.yanivks_pro.durastep.api.WorkflowState;
 import io.github.yanivks_pro.durastep.runtime.Command;
+import io.github.yanivks_pro.durastep.runtime.Command.CancelWorkflow;
+import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
+import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.SetStatus;
 import io.github.yanivks_pro.durastep.runtime.WorkflowBlockedException;
 import io.github.yanivks_pro.durastep.runtime.WorkflowDefinition;
@@ -36,6 +44,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 public final class Worker {
 
@@ -119,6 +128,11 @@ public final class Worker {
     }
   }
 
+  static final String MDC_WORKFLOW_ID = "workflowId";
+  static final String MDC_ACTIVITY = "activity";
+  static final String MDC_ATTEMPT = "attempt";
+
+  private final EngineListener listener;
   private final JdbcWorkflowStore store;
   private final WorkflowRegistry workflows;
   private final WorkflowRuntime workflowRuntime;
@@ -146,6 +160,27 @@ public final class Worker {
       Settings settings,
       CrashPoints crashPoints,
       DatabaseHealth health) {
+    this(
+        store,
+        workflows,
+        workflowRuntime,
+        activityRuntime,
+        settings,
+        crashPoints,
+        health,
+        EngineListener.NONE);
+  }
+
+  public Worker(
+      JdbcWorkflowStore store,
+      WorkflowRegistry workflows,
+      WorkflowRuntime workflowRuntime,
+      ActivityRuntime activityRuntime,
+      Settings settings,
+      CrashPoints crashPoints,
+      DatabaseHealth health,
+      EngineListener listener) {
+    this.listener = SafeEngineListener.around(listener);
     this.health = health;
     this.store = store;
     this.workflows = workflows;
@@ -263,6 +298,9 @@ public final class Worker {
         permits.release(granted - claimed.size());
         granted = 0;
         for (ClaimedTask task : claimed) {
+          if (task.takenOver()) {
+            listener.leaseExpired(workKindOf(kind));
+          }
           startTask(kind, task, permits);
         }
         if (claimed.isEmpty()) {
@@ -344,10 +382,11 @@ public final class Worker {
     int failures = 0;
     while (running) {
       try {
-        int fired = store.fireDueTimers(TIMERS_PER_BATCH);
+        List<Duration> lateness = store.fireDueTimers(TIMERS_PER_BATCH);
         health.succeeded();
         failures = 0;
-        if (fired < TIMERS_PER_BATCH) {
+        lateness.forEach(listener::timerFired);
+        if (lateness.size() < TIMERS_PER_BATCH) {
           Thread.sleep(TIMER_CHECK_INTERVAL);
         }
       } catch (InterruptedException e) {
@@ -381,6 +420,16 @@ public final class Worker {
   }
 
   private void decide(ClaimedTask task) {
+    MDC.put(MDC_WORKFLOW_ID, task.workflowId());
+    try {
+      decideLogged(task);
+    } finally {
+      MDC.remove(MDC_WORKFLOW_ID);
+    }
+  }
+
+  private void decideLogged(ClaimedTask task) {
+    long started = System.nanoTime();
     try {
       DecisionInput input = store.loadDecision(task);
       int historyLength = input.history().size() + input.inbox().size();
@@ -409,14 +458,40 @@ public final class Worker {
       List<Command> commands =
           workflowRuntime.decide(definition.get(), task.workflowId(), input.historyWithInbox());
       store.commitDecision(task, input, commands);
+      listener.decisionMade(input.workflowType(), Duration.ofNanos(System.nanoTime() - started));
+      finalState(commands)
+          .ifPresent(state -> listener.workflowFinished(input.workflowType(), state));
       warnIfHistoryGrewLong(task, input.history().size(), historyLength + eventsAddedBy(commands));
     } catch (NonDeterminismException e) {
       block(task, e);
     } catch (WorkflowBlockedException e) {
       block(task, e.getCause());
     } catch (StaleTaskException e) {
+      listener.staleResultRejected(WorkKind.DECISION);
       log.warn("discarded a decision for workflow {}: {}", task.workflowId(), e.getMessage());
     }
+  }
+
+  private static Optional<WorkflowState> finalState(List<Command> commands) {
+    for (Command command : commands) {
+      switch (command) {
+        case CompleteWorkflow ignored -> {
+          return Optional.of(WorkflowState.COMPLETED);
+        }
+        case FailWorkflow ignored -> {
+          return Optional.of(WorkflowState.FAILED);
+        }
+        case CancelWorkflow ignored -> {
+          return Optional.of(WorkflowState.CANCELLED);
+        }
+        default -> {}
+      }
+    }
+    return Optional.empty();
+  }
+
+  private static WorkKind workKindOf(TaskKind kind) {
+    return kind == TaskKind.WORKFLOW ? WorkKind.DECISION : WorkKind.ACTIVITY;
   }
 
   private void warnIfHistoryGrewLong(ClaimedTask task, int before, int after) {
@@ -440,6 +515,7 @@ public final class Worker {
     try {
       store.blockDecision(task, error, retryAfter);
     } catch (StaleTaskException e) {
+      listener.staleResultRejected(WorkKind.DECISION);
       log.warn(
           "discarded a blocked decision for workflow {}: {}", task.workflowId(), e.getMessage());
       return;
@@ -471,8 +547,23 @@ public final class Worker {
   }
 
   private void runActivity(ClaimedTask task) throws InterruptedException {
-    ActivityToRun activity = store.loadActivity(task);
+    MDC.put(MDC_WORKFLOW_ID, task.workflowId());
+    MDC.put(MDC_ATTEMPT, String.valueOf(task.attempt()));
+    try {
+      ActivityToRun activity = store.loadActivity(task);
+      MDC.put(MDC_ACTIVITY, activity.activity());
+      runActivityLogged(task, activity);
+    } finally {
+      MDC.remove(MDC_WORKFLOW_ID);
+      MDC.remove(MDC_ATTEMPT);
+      MDC.remove(MDC_ACTIVITY);
+    }
+  }
+
+  private void runActivityLogged(ClaimedTask task, ActivityToRun activity)
+      throws InterruptedException {
     ActivityOptions options = activity.options();
+    long started = System.nanoTime();
     try {
       Duration attemptLease =
           options.heartbeatTimeout().orElse(options.attemptTimeout().plus(lease));
@@ -499,6 +590,10 @@ public final class Worker {
             saveBefore(
                 saveBefore,
                 () -> store.retryActivity(task, failed.failure(), delay, options.totalTimeout()));
+        listener.activityFinished(
+            activity.activity(),
+            retried ? ActivityOutcome.RETRIED : finalOutcome(result),
+            Duration.ofNanos(System.nanoTime() - started));
         log.info(
             retried
                 ? "attempt {} of {} for workflow {} failed with {}; retrying in {}"
@@ -515,8 +610,13 @@ public final class Worker {
               store.completeActivity(task, result);
               return true;
             });
+        listener.activityFinished(
+            activity.activity(),
+            finalOutcome(result),
+            Duration.ofNanos(System.nanoTime() - started));
       }
     } catch (StaleTaskException e) {
+      listener.staleResultRejected(WorkKind.ACTIVITY);
       log.warn(
           "discarded the result of {} for workflow {}: {}",
           activity.activity(),
@@ -531,6 +631,16 @@ public final class Worker {
     } finally {
       leaseExtendedAt.remove(task.id());
     }
+  }
+
+  private static ActivityOutcome finalOutcome(ActivityResult result) {
+    return switch (result) {
+      case ActivityResult.Completed ignored -> ActivityOutcome.SUCCEEDED;
+      case Failed failed ->
+          failed.failure().type().equals(ActivityTimeoutException.class.getName())
+              ? ActivityOutcome.TIMED_OUT
+              : ActivityOutcome.FAILED;
+    };
   }
 
   private <T> T saveBefore(long deadlineNanos, Supplier<T> save) throws InterruptedException {

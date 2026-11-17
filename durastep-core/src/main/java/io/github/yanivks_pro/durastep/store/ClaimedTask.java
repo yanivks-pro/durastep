@@ -7,4 +7,17 @@ public record ClaimedTask(
     Integer activitySeq,
     int attempt,
     long fencingToken,
-    String owner) {}
+    String owner,
+    boolean takenOver) {
+
+  public ClaimedTask(
+      long id,
+      String workflowId,
+      TaskKind kind,
+      Integer activitySeq,
+      int attempt,
+      long fencingToken,
+      String owner) {
+    this(id, workflowId, kind, activitySeq, attempt, fencingToken, owner, false);
+  }
+}
