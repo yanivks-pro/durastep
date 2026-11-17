@@ -120,8 +120,18 @@
         <version>${slf4j.version}</version>
       </dependency>
       <dependency>
+        <groupId>io.github.yanivks-pro</groupId>
+        <artifactId>durastep-micrometer</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
         <groupId>io.micrometer</groupId>
         <artifactId>micrometer-core</artifactId>
+        <version>${micrometer.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.micrometer</groupId>
+        <artifactId>micrometer-registry-prometheus</artifactId>
         <version>${micrometer.version}</version>
       </dependency>
       <dependency>

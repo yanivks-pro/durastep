@@ -7,6 +7,7 @@ import io.github.yanivks_pro.durastep.api.DurastepClient;
 import io.github.yanivks_pro.durastep.api.DurastepEngine;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
+import io.micrometer.core.instrument.search.MeterNotFoundException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -75,10 +76,18 @@ class DurastepMetricsIT {
 
       await()
           .atMost(WAIT)
+          .ignoreExceptionsInstanceOf(MeterNotFoundException.class)
           .untilAsserted(
               () -> {
                 assertThat(registry.get("durastep.workflows.running").gauge().value()).isEqualTo(1);
                 assertThat(registry.get("durastep.workflows.blocked").gauge().value()).isEqualTo(1);
+                assertThat(
+                        registry
+                            .get("durastep.tasks.ready")
+                            .tags("kind", "decision", "queue", "default")
+                            .gauge()
+                            .value())
+                    .isEqualTo(1);
               });
       assertThat(
               registry.get("durastep.workflows.started").tag("type", "Greeter").counter().count())
@@ -100,13 +109,6 @@ class DurastepMetricsIT {
       assertThat(registry.get("durastep.decisions").tag("type", "Greeter").timer().count())
           .isGreaterThanOrEqualTo(2);
       assertThat(registry.get("durastep.timers.lateness").timer().count()).isEqualTo(1);
-      assertThat(
-              registry
-                  .get("durastep.tasks.ready")
-                  .tags("kind", "decision", "queue", "default")
-                  .gauge()
-                  .value())
-          .isEqualTo(1);
       assertThat(registry.get("durastep.tasks.oldest.age").gauge().value()).isNotNegative();
     }
   }

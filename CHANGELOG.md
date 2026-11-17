@@ -31,6 +31,8 @@ All notable changes to Durastep are recorded here. The format follows
 - `client.stats()` counts running and blocked workflows and waiting work, with the age of the oldest.
 - New module `durastep-micrometer`: `DurastepMetrics` turns the engine's events into Micrometer counters and
   timers, and the database's counts into gauges refreshed every ten seconds.
+- Prometheus and Grafana in `docker compose --profile observability`, with a ready-made Durastep dashboard,
+  and a load generator in the examples (`-Dexample=load`) that serves its metrics on port 8081.
 
 ### Fixed
 
