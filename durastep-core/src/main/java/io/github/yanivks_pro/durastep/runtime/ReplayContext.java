@@ -181,11 +181,14 @@ final class ReplayContext implements WorkflowContext {
     }
     String stepName = "awaitSignal(" + name + ")";
     int stepIndex = nextStep;
-    if (stepIndex >= history.steps().size()) {
+    if (notYetScheduledWhenCancelled(stepIndex)) {
       Optional<HistoryEntry> buffered = nextSignal(name, Integer.MAX_VALUE);
       if (cancellationDue(buffered.map(HistoryEntry::seq).orElse(Integer.MAX_VALUE))) {
         throw deliverCancellation();
       }
+    }
+    if (stepIndex >= history.steps().size()) {
+      Optional<HistoryEntry> buffered = nextSignal(name, Integer.MAX_VALUE);
       nextStep++;
       newCommands.add(new StartTimer(timeout, name));
       if (buffered.isEmpty()) {
@@ -241,6 +244,12 @@ final class ReplayContext implements WorkflowContext {
     return type.cast(converter.fromPayload(((SignalReceived) signal.event()).payload(), type));
   }
 
+  private boolean notYetScheduledWhenCancelled(int stepIndex) {
+    return stepIndex >= history.steps().size()
+        || (history.cancelRequest() != null
+            && history.steps().get(stepIndex).scheduled().seq() > history.cancelRequest().seq());
+  }
+
   private boolean cancellationDue(int resultSeq) {
     return history.cancelRequest() != null
         && !cancellationDelivered
@@ -279,10 +288,10 @@ final class ReplayContext implements WorkflowContext {
       throw suspension;
     }
     int stepIndex = nextStep;
+    if (notYetScheduledWhenCancelled(stepIndex) && cancellationDue(Integer.MAX_VALUE)) {
+      throw deliverCancellation();
+    }
     if (stepIndex >= history.steps().size()) {
-      if (cancellationDue(Integer.MAX_VALUE)) {
-        throw deliverCancellation();
-      }
       nextStep++;
       newCommands.add(newStep.get());
       throw suspend();
