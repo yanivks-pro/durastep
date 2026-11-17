@@ -13,7 +13,9 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowStarted;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -21,6 +23,7 @@ record ReplayHistory(
     WorkflowStarted started,
     Instant startedAt,
     List<Step> steps,
+    Map<String, List<Step>> stepsByBranch,
     List<HistoryEntry> signals,
     HistoryEntry cancelRequest,
     boolean deadlinePassed) {
@@ -31,6 +34,14 @@ record ReplayHistory(
 
     String name() {
       return nameOf(scheduled);
+    }
+
+    String branch() {
+      return switch (scheduled.event()) {
+        case ActivityScheduled activity -> activity.branch();
+        case TimerStarted timer -> timer.branch();
+        default -> throw new IllegalStateException("event " + scheduled.seq() + " is not a step");
+      };
     }
 
     boolean hasOutcome() {
@@ -96,13 +107,23 @@ record ReplayHistory(
     }
     List<Step> steps =
         stepsInOrder.stream().map(step -> new Step(step, outcomeBySeq.get(step.seq()))).toList();
+    Map<String, List<Step>> stepsByBranch = new LinkedHashMap<>();
+    for (Step step : steps) {
+      stepsByBranch.computeIfAbsent(step.branch(), branch -> new ArrayList<>()).add(step);
+    }
+    stepsByBranch.replaceAll((branch, branchSteps) -> List.copyOf(branchSteps));
     return new ReplayHistory(
         started,
         history.getFirst().recordedAt(),
         steps,
+        Collections.unmodifiableMap(stepsByBranch),
         List.copyOf(signals),
         cancelRequest,
         deadlinePassed);
+  }
+
+  List<Step> stepsOf(String branch) {
+    return stepsByBranch.getOrDefault(branch, List.of());
   }
 
   static String nameOf(HistoryEntry step) {

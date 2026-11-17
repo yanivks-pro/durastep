@@ -256,7 +256,10 @@ public final class JdbcWorkflowStore {
                     task.workflowId(),
                     seq,
                     new ActivityScheduled(
-                        schedule.activity(), schedule.arguments(), schedule.options()),
+                        schedule.activity(),
+                        schedule.arguments(),
+                        schedule.options(),
+                        schedule.branch()),
                     null);
                 update(
                     connection,
@@ -274,7 +277,7 @@ public final class JdbcWorkflowStore {
                     connection,
                     task.workflowId(),
                     seq,
-                    new TimerStarted(timer.duration(), timer.signal()),
+                    new TimerStarted(timer.duration(), timer.signal(), timer.branch()),
                     null);
                 update(
                     connection,

@@ -4,6 +4,7 @@ import io.github.yanivks_pro.durastep.api.ActivityFailedException;
 import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.CancelledException;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
+import io.github.yanivks_pro.durastep.api.Promise;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
@@ -16,7 +17,9 @@ import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -24,34 +27,83 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Semaphore;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 final class ReplayContext implements WorkflowContext {
 
   static final int MAX_STATUS_LENGTH = 1_000;
 
+  record Outcome(
+      boolean mainFinished,
+      Object result,
+      Throwable thrown,
+      boolean suspensionCaught,
+      Throwable thrownAfterCatch) {}
+
+  private enum Kind {
+    RESULT,
+    SIGNAL,
+    CANCEL
+  }
+
+  private record Option(Kind kind, HistoryEntry entry) {
+
+    int seq() {
+      return entry.seq();
+    }
+  }
+
   private final String workflowId;
   private final ReplayHistory history;
   private final PayloadConverter converter;
-  private final Random random;
   private final WorkflowSuspended suspension = new WorkflowSuspended();
-
-  private int nextStep;
-  private Instant now;
-  private boolean suspended;
+  private final Semaphore turnEnded = new Semaphore(0);
+  private final List<Branch> branches = new ArrayList<>();
+  private final Deque<Branch> runnable = new ArrayDeque<>();
   private final List<Command> newCommands = new ArrayList<>();
   private final Set<Integer> consumedSignals = new HashSet<>();
+
+  private Branch main;
+  private Branch current;
+  private int cursor = 1;
+  private boolean aborting;
+  private boolean cancellationDelivered;
   private String status;
   private boolean statusSet;
-  private boolean cancellationDelivered;
   private NonDeterminismException nonDeterminism;
 
   ReplayContext(String workflowId, ReplayHistory history, PayloadConverter converter) {
     this.workflowId = workflowId;
     this.history = history;
     this.converter = converter;
-    this.random = new Random(seedFor(workflowId));
-    this.now = history.startedAt();
+  }
+
+  Outcome run(Supplier<?> mainCode) {
+    main =
+        new Branch(
+            HistoryEvent.MAIN_BRANCH, mainCode, history.startedAt(), seedFor(workflowId), false);
+    current = main;
+    runnable.add(main);
+    do {
+      while (!runnable.isEmpty() && nonDeterminism == null && !main.finished) {
+        Branch next = runnable.poll();
+        takeTurn(next);
+        if (next.finished) {
+          runnable.addAll(next.waiters);
+          next.waiters.clear();
+        }
+      }
+    } while (nonDeterminism == null && !main.finished && deliverNextResult());
+    boolean mainFinished = main.finished;
+    Branch caught = stopUnfinishedBranches();
+    return new Outcome(
+        mainFinished,
+        main.result,
+        main.thrown,
+        caught != null,
+        caught == null ? null : caught.thrown);
   }
 
   @Override
@@ -79,17 +131,42 @@ final class ReplayContext implements WorkflowContext {
   }
 
   @Override
+  public <T> Promise<T> async(Supplier<T> body) {
+    Objects.requireNonNull(body, "body");
+    if (aborting) {
+      throw suspension;
+    }
+    Branch parent = current;
+    String id = parent.id + "." + ++parent.children;
+    Branch child =
+        new Branch(id, body, parent.now, seedFor(workflowId + "/" + id), parent.cancelled);
+    runnable.add(child);
+    return new BranchPromise<>(child);
+  }
+
+  @Override
+  public Promise<Void> async(Runnable body) {
+    Objects.requireNonNull(body, "body");
+    return this.<Void>async(
+        () -> {
+          body.run();
+          return null;
+        });
+  }
+
+  @Override
   public Instant now() {
-    return now;
+    return current.now;
   }
 
   @Override
   public Random random() {
-    return random;
+    return current.random;
   }
 
   @Override
   public UUID randomUUID() {
+    Random random = current.random;
     long mostSignificant = (random.nextLong() & ~0xF000L) | 0x4000L;
     long leastSignificant = (random.nextLong() & 0x3FFFFFFFFFFFFFFFL) | 0x8000000000000000L;
     return new UUID(mostSignificant, leastSignificant);
@@ -97,14 +174,6 @@ final class ReplayContext implements WorkflowContext {
 
   boolean cancellationDelivered() {
     return cancellationDelivered;
-  }
-
-  boolean suspended() {
-    return suspended;
-  }
-
-  boolean isSuspension(Throwable error) {
-    return error == suspension;
   }
 
   List<Command> newCommands() {
@@ -119,8 +188,16 @@ final class ReplayContext implements WorkflowContext {
     return nonDeterminism;
   }
 
-  int stepsReached() {
-    return nextStep;
+  int mainStepsReached() {
+    return main.nextStep;
+  }
+
+  Optional<String> branchInHistoryNeverStarted() {
+    Set<String> started = new HashSet<>();
+    branches.forEach(branch -> started.add(branch.id));
+    return history.stepsByBranch().keySet().stream()
+        .filter(branch -> !started.contains(branch))
+        .findFirst();
   }
 
   @Override
@@ -129,18 +206,17 @@ final class ReplayContext implements WorkflowContext {
     if (duration.isNegative()) {
       throw new IllegalArgumentException("cannot sleep for a negative duration: " + duration);
     }
-    ReplayHistory.Step step = reachStep(ReplayHistory.SLEEP, () -> new StartTimer(duration));
-    advanceTo(step.outcome());
+    reachStep(ReplayHistory.SLEEP, branch -> new StartTimer(duration, null, branch));
   }
 
   private Object callActivity(
       Class<?> activityInterface, Method method, Object[] args, ActivityOptions options) {
     String activity = activityInterface.getSimpleName() + "." + method.getName();
-    ReplayHistory.Step step =
+    HistoryEntry outcome =
         reachStep(
-            activity, () -> new ScheduleActivity(activity, converter.toArguments(args), options));
-    advanceTo(step.outcome());
-    return switch (step.outcome().event()) {
+            activity,
+            branch -> new ScheduleActivity(activity, converter.toArguments(args), options, branch));
+    return switch (outcome.event()) {
       case ActivityCompleted completed ->
           method.getReturnType() == void.class
               ? null
@@ -148,7 +224,7 @@ final class ReplayContext implements WorkflowContext {
       case ActivityFailed failed ->
           throw new ActivityFailedException(
               activity, failed.failure().type(), failed.failure().message(), failed.attempts());
-      default -> throw new IllegalStateException("unexpected outcome " + step.outcome());
+      default -> throw new IllegalStateException("unexpected outcome " + outcome);
     };
   }
 
@@ -156,17 +232,15 @@ final class ReplayContext implements WorkflowContext {
   public <T> T awaitSignal(String name, Class<T> type) {
     Objects.requireNonNull(name, "name");
     Objects.requireNonNull(type, "type");
-    if (suspended) {
-      throw suspension;
+    Branch branch = mainOnly("awaitSignal");
+    List<Option> options = new ArrayList<>();
+    nextSignal(name, Integer.MAX_VALUE).ifPresent(signal -> options.add(signalOption(signal)));
+    cancelOption(branch).ifPresent(options::add);
+    Option chosen = await(branch, options);
+    if (chosen.kind() == Kind.CANCEL) {
+      throw new CancelledException(workflowId);
     }
-    Optional<HistoryEntry> signal = nextSignal(name, Integer.MAX_VALUE);
-    if (cancellationDue(signal.map(HistoryEntry::seq).orElse(Integer.MAX_VALUE))) {
-      throw deliverCancellation();
-    }
-    if (signal.isEmpty()) {
-      throw suspend();
-    }
-    return receive(signal.get(), type);
+    return receive(chosen.entry(), type);
   }
 
   @Override
@@ -176,44 +250,40 @@ final class ReplayContext implements WorkflowContext {
     if (timeout.isNegative()) {
       throw new IllegalArgumentException("cannot wait for a negative duration: " + timeout);
     }
-    if (suspended) {
-      throw suspension;
-    }
+    Branch branch = mainOnly("awaitSignal");
     String stepName = "awaitSignal(" + name + ")";
-    int stepIndex = nextStep;
-    if (notYetScheduledWhenCancelled(stepIndex)) {
+    List<ReplayHistory.Step> steps = history.stepsOf(branch.id);
+    int stepIndex = branch.nextStep;
+    if (notYetScheduledWhenCancelled(branch, steps, stepIndex)) {
       Optional<HistoryEntry> buffered = nextSignal(name, Integer.MAX_VALUE);
-      if (cancellationDue(buffered.map(HistoryEntry::seq).orElse(Integer.MAX_VALUE))) {
-        throw deliverCancellation();
+      if (buffered.isEmpty() || buffered.get().seq() > history.cancelRequest().seq()) {
+        throw cancelHere(branch);
       }
     }
-    if (stepIndex >= history.steps().size()) {
-      Optional<HistoryEntry> buffered = nextSignal(name, Integer.MAX_VALUE);
-      nextStep++;
-      newCommands.add(new StartTimer(timeout, name));
-      if (buffered.isEmpty()) {
-        throw suspend();
+    List<Option> options = new ArrayList<>();
+    if (stepIndex >= steps.size()) {
+      branch.nextStep++;
+      newCommands.add(new StartTimer(timeout, name, branch.id));
+      nextSignal(name, Integer.MAX_VALUE).ifPresent(signal -> options.add(signalOption(signal)));
+    } else {
+      ReplayHistory.Step step = steps.get(stepIndex);
+      branch.nextStep++;
+      if (!step.name().equals(stepName)) {
+        throw mismatch(branch, stepName, stepIndex, step);
       }
-      return Optional.of(receive(buffered.get(), type));
+      int firedAt = step.hasOutcome() ? step.outcome().seq() : Integer.MAX_VALUE;
+      nextSignal(name, firedAt).ifPresent(signal -> options.add(signalOption(signal)));
+      if (step.hasOutcome()) {
+        options.add(new Option(Kind.RESULT, step.outcome()));
+      }
     }
-    ReplayHistory.Step step = history.steps().get(stepIndex);
-    nextStep++;
-    if (!step.name().equals(stepName)) {
-      throw mismatch(stepName, stepIndex, step);
-    }
-    int firedAt = step.hasOutcome() ? step.outcome().seq() : Integer.MAX_VALUE;
-    Optional<HistoryEntry> signal = nextSignal(name, firedAt);
-    if (cancellationDue(signal.map(HistoryEntry::seq).orElse(firedAt))) {
-      throw deliverCancellation();
-    }
-    if (signal.isPresent()) {
-      return Optional.of(receive(signal.get(), type));
-    }
-    if (!step.hasOutcome()) {
-      throw suspend();
-    }
-    advanceTo(step.outcome());
-    return Optional.empty();
+    cancelOption(branch).ifPresent(options::add);
+    Option chosen = await(branch, options);
+    return switch (chosen.kind()) {
+      case SIGNAL -> Optional.of(receive(chosen.entry(), type));
+      case RESULT -> Optional.empty();
+      case CANCEL -> throw new CancelledException(workflowId);
+    };
   }
 
   @Override
@@ -227,6 +297,182 @@ final class ReplayContext implements WorkflowContext {
     this.statusSet = true;
   }
 
+  private HistoryEntry reachStep(String name, Function<String, Command> newStep) {
+    if (aborting) {
+      throw suspension;
+    }
+    Branch branch = current;
+    List<ReplayHistory.Step> steps = history.stepsOf(branch.id);
+    int stepIndex = branch.nextStep;
+    if (notYetScheduledWhenCancelled(branch, steps, stepIndex)) {
+      throw cancelHere(branch);
+    }
+    if (stepIndex >= steps.size()) {
+      branch.nextStep++;
+      newCommands.add(newStep.apply(branch.id));
+      throw waitForever(branch);
+    }
+    ReplayHistory.Step step = steps.get(stepIndex);
+    branch.nextStep++;
+    if (!step.name().equals(name)) {
+      throw mismatch(branch, name, stepIndex, step);
+    }
+    List<Option> options = new ArrayList<>();
+    if (step.hasOutcome()) {
+      options.add(new Option(Kind.RESULT, step.outcome()));
+    }
+    cancelOption(branch).ifPresent(options::add);
+    Option chosen = await(branch, options);
+    if (chosen.kind() == Kind.CANCEL) {
+      throw new CancelledException(workflowId);
+    }
+    return chosen.entry();
+  }
+
+  private boolean notYetScheduledWhenCancelled(
+      Branch branch, List<ReplayHistory.Step> steps, int stepIndex) {
+    if (history.cancelRequest() == null || branch.cancelled) {
+      return false;
+    }
+    return stepIndex >= steps.size()
+        || steps.get(stepIndex).scheduled().seq() > history.cancelRequest().seq();
+  }
+
+  private Optional<Option> cancelOption(Branch branch) {
+    if (history.cancelRequest() == null || branch.cancelled) {
+      return Optional.empty();
+    }
+    return Optional.of(new Option(Kind.CANCEL, history.cancelRequest()));
+  }
+
+  private CancelledException cancelHere(Branch branch) {
+    await(branch, List.of(cancelOption(branch).orElseThrow()));
+    return new CancelledException(workflowId);
+  }
+
+  private Option await(Branch branch, List<Option> options) {
+    if (aborting) {
+      throw suspension;
+    }
+    Option earliest = earliest(options);
+    if (earliest == null || earliest.seq() > cursor) {
+      branch.options = List.copyOf(options);
+      endTurn(branch);
+      earliest = branch.delivered;
+      branch.delivered = null;
+    }
+    if (earliest.kind() == Kind.CANCEL) {
+      branch.cancelled = true;
+      cancellationDelivered = true;
+    }
+    branch.advanceTo(earliest.entry());
+    return earliest;
+  }
+
+  private WorkflowSuspended waitForever(Branch branch) {
+    await(branch, List.of());
+    throw new IllegalStateException("a branch waiting forever was resumed");
+  }
+
+  private Object awaitBranch(Branch target) {
+    if (aborting) {
+      throw suspension;
+    }
+    if (!target.finished) {
+      target.waiters.add(current);
+      endTurn(current);
+    }
+    if (target.thrown instanceof RuntimeException e) {
+      throw e;
+    }
+    if (target.thrown instanceof Error e) {
+      throw e;
+    }
+    if (target.thrown != null) {
+      throw new IllegalStateException(target.thrown);
+    }
+    return target.result;
+  }
+
+  private boolean deliverNextResult() {
+    Option next = null;
+    for (Branch branch : branches) {
+      if (branch.options != null) {
+        Option earliest = earliest(branch.options);
+        if (earliest != null && (next == null || earliest.seq() < next.seq())) {
+          next = earliest;
+        }
+      }
+    }
+    if (next == null) {
+      return false;
+    }
+    cursor = next.seq();
+    for (Branch branch : branches) {
+      if (branch.options != null) {
+        for (Option option : branch.options) {
+          if (option.seq() == cursor) {
+            branch.delivered = option;
+            branch.options = null;
+            runnable.add(branch);
+            break;
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  private Branch stopUnfinishedBranches() {
+    aborting = true;
+    Branch caught = null;
+    for (Branch branch : List.copyOf(branches)) {
+      if (branch.thread != null && !branch.finished) {
+        takeTurn(branch);
+        if (caught == null && branch.thrown != suspension) {
+          caught = branch;
+        }
+      }
+    }
+    for (Branch branch : branches) {
+      if (branch.thread != null) {
+        joinUninterruptibly(branch.thread);
+      }
+    }
+    return caught;
+  }
+
+  private void takeTurn(Branch branch) {
+    current = branch;
+    if (branch.thread == null) {
+      branch.thread = Thread.ofVirtual().name(threadName(branch)).start(branch::run);
+    } else {
+      branch.resume.release();
+    }
+    turnEnded.acquireUninterruptibly();
+  }
+
+  private void endTurn(Branch branch) {
+    turnEnded.release();
+    branch.resume.acquireUninterruptibly();
+    if (aborting) {
+      throw suspension;
+    }
+  }
+
+  private Branch mainOnly(String operation) {
+    if (aborting) {
+      throw suspension;
+    }
+    if (current != main) {
+      throw new IllegalStateException(
+          operation
+              + " can only be called from the workflow's main code, not from a branch started"
+              + " with async");
+    }
+    return current;
+  }
+
   private Optional<HistoryEntry> nextSignal(String name, int beforeSeq) {
     for (HistoryEntry entry : history.signals()) {
       if (entry.seq() < beforeSeq
@@ -238,37 +484,17 @@ final class ReplayContext implements WorkflowContext {
     return Optional.empty();
   }
 
+  private static Option signalOption(HistoryEntry signal) {
+    return new Option(Kind.SIGNAL, signal);
+  }
+
   private <T> T receive(HistoryEntry signal, Class<T> type) {
     consumedSignals.add(signal.seq());
-    advanceTo(signal);
     return type.cast(converter.fromPayload(((SignalReceived) signal.event()).payload(), type));
   }
 
-  private boolean notYetScheduledWhenCancelled(int stepIndex) {
-    return stepIndex >= history.steps().size()
-        || (history.cancelRequest() != null
-            && history.steps().get(stepIndex).scheduled().seq() > history.cancelRequest().seq());
-  }
-
-  private boolean cancellationDue(int resultSeq) {
-    return history.cancelRequest() != null
-        && !cancellationDelivered
-        && resultSeq > history.cancelRequest().seq();
-  }
-
-  private CancelledException deliverCancellation() {
-    cancellationDelivered = true;
-    advanceTo(history.cancelRequest());
-    return new CancelledException(workflowId);
-  }
-
-  private void advanceTo(HistoryEntry entry) {
-    if (entry.recordedAt().isAfter(now)) {
-      now = entry.recordedAt();
-    }
-  }
-
-  private WorkflowSuspended mismatch(String name, int stepIndex, ReplayHistory.Step step) {
+  private WorkflowSuspended mismatch(
+      Branch branch, String name, int stepIndex, ReplayHistory.Step step) {
     nonDeterminism =
         new NonDeterminismException(
             "workflow "
@@ -277,42 +503,27 @@ final class ReplayContext implements WorkflowContext {
                 + name
                 + " at step "
                 + (stepIndex + 1)
+                + (branch == main ? "" : " of branch " + branch.id)
                 + ", but its history has "
                 + step.name()
                 + " there");
-    return suspend();
+    return waitForever(branch);
   }
 
-  private ReplayHistory.Step reachStep(String name, Supplier<Command> newStep) {
-    if (suspended) {
-      throw suspension;
-    }
-    int stepIndex = nextStep;
-    if (notYetScheduledWhenCancelled(stepIndex) && cancellationDue(Integer.MAX_VALUE)) {
-      throw deliverCancellation();
-    }
-    if (stepIndex >= history.steps().size()) {
-      nextStep++;
-      newCommands.add(newStep.get());
-      throw suspend();
-    }
-    ReplayHistory.Step step = history.steps().get(stepIndex);
-    nextStep++;
-    if (!step.name().equals(name)) {
-      throw mismatch(name, stepIndex, step);
-    }
-    if (cancellationDue(step.hasOutcome() ? step.outcome().seq() : Integer.MAX_VALUE)) {
-      throw deliverCancellation();
-    }
-    if (!step.hasOutcome()) {
-      throw suspend();
-    }
-    return step;
+  private String threadName(Branch branch) {
+    return "durastep-workflow-"
+        + workflowId
+        + (branch.id.equals(HistoryEvent.MAIN_BRANCH) ? "" : "-" + branch.id);
   }
 
-  private WorkflowSuspended suspend() {
-    suspended = true;
-    return suspension;
+  private static Option earliest(List<Option> options) {
+    Option earliest = null;
+    for (Option option : options) {
+      if (earliest == null || option.seq() < earliest.seq()) {
+        earliest = option;
+      }
+    }
+    return earliest;
   }
 
   @SuppressWarnings("ReferenceEquality")
@@ -325,8 +536,85 @@ final class ReplayContext implements WorkflowContext {
     };
   }
 
-  private static long seedFor(String workflowId) {
-    return UUID.nameUUIDFromBytes(workflowId.getBytes(StandardCharsets.UTF_8))
-        .getMostSignificantBits();
+  private static long seedFor(String name) {
+    return UUID.nameUUIDFromBytes(name.getBytes(StandardCharsets.UTF_8)).getMostSignificantBits();
+  }
+
+  private static void joinUninterruptibly(Thread thread) {
+    boolean interrupted = false;
+    while (true) {
+      try {
+        thread.join();
+        break;
+      } catch (InterruptedException e) {
+        interrupted = true;
+      }
+    }
+    if (interrupted) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
+  private final class Branch {
+    final String id;
+    final Supplier<?> code;
+    final Random random;
+    final Semaphore resume = new Semaphore(0);
+    final List<Branch> waiters = new ArrayList<>();
+    Instant now;
+    int nextStep;
+    int children;
+    boolean cancelled;
+    Thread thread;
+    boolean finished;
+    Object result;
+    Throwable thrown;
+    List<Option> options;
+    Option delivered;
+
+    Branch(String id, Supplier<?> code, Instant now, long seed, boolean cancelled) {
+      this.id = id;
+      this.code = code;
+      this.now = now;
+      this.random = new Random(seed);
+      this.cancelled = cancelled;
+      branches.add(this);
+    }
+
+    void advanceTo(HistoryEntry entry) {
+      if (entry.recordedAt().isAfter(now)) {
+        now = entry.recordedAt();
+      }
+    }
+
+    void run() {
+      try {
+        result = code.get();
+      } catch (Throwable error) {
+        thrown = error;
+      } finally {
+        finished = true;
+        turnEnded.release();
+      }
+    }
+  }
+
+  private final class BranchPromise<T> implements Promise<T> {
+    private final Branch branch;
+
+    BranchPromise(Branch branch) {
+      this.branch = branch;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public T get() {
+      return (T) awaitBranch(branch);
+    }
+
+    @Override
+    public boolean isDone() {
+      return branch.finished;
+    }
   }
 }
