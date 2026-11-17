@@ -3,9 +3,11 @@ package io.github.yanivks_pro.durastep.runtime;
 import io.github.yanivks_pro.durastep.api.ActivityFailedException;
 import io.github.yanivks_pro.durastep.api.CancelledException;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
+import io.github.yanivks_pro.durastep.api.PayloadTooLargeException;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowFailedException;
 import io.github.yanivks_pro.durastep.api.WorkflowTimeoutException;
+import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.Command.CancelWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
@@ -88,7 +90,13 @@ public final class WorkflowRuntime {
     if (ctx.cancellationDelivered()) {
       return withStatus(ctx, List.of(new CancelWorkflow()));
     }
-    return withStatus(ctx, List.of(new CompleteWorkflow(converter.toPayload(outcome.result()))));
+    Payload result;
+    try {
+      result = converter.toPayload(outcome.result());
+    } catch (PayloadTooLargeException e) {
+      throw new WorkflowBlockedException(workflowId, e);
+    }
+    return withStatus(ctx, List.of(new CompleteWorkflow(result)));
   }
 
   private static List<Command> withStatus(ReplayContext ctx, List<Command> commands) {

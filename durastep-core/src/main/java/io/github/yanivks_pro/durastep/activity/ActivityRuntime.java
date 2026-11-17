@@ -5,6 +5,7 @@ import io.github.yanivks_pro.durastep.activity.ActivityResult.Completed;
 import io.github.yanivks_pro.durastep.activity.ActivityResult.Failed;
 import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.ActivityTimeoutException;
+import io.github.yanivks_pro.durastep.api.PayloadTooLargeException;
 import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.Failure;
@@ -85,7 +86,11 @@ public final class ActivityRuntime {
                 });
     try {
       Object result = outcome.get(options.attemptTimeout().toNanos(), TimeUnit.NANOSECONDS);
-      return new Completed(converter.toPayload(result));
+      try {
+        return new Completed(converter.toPayload(result));
+      } catch (PayloadTooLargeException e) {
+        return new Failed(Failure.of(e), false);
+      }
     } catch (TimeoutException e) {
       attempt.interrupt();
       ActivityTimeoutException timeout =

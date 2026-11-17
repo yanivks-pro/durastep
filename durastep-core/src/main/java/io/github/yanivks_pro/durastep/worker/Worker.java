@@ -8,6 +8,7 @@ import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.RetryPolicy;
 import io.github.yanivks_pro.durastep.runtime.Command;
+import io.github.yanivks_pro.durastep.runtime.Command.SetStatus;
 import io.github.yanivks_pro.durastep.runtime.WorkflowBlockedException;
 import io.github.yanivks_pro.durastep.runtime.WorkflowDefinition;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRegistry;
@@ -55,7 +56,30 @@ public final class Worker {
       Duration pollInterval,
       int workflowConcurrency,
       int activityConcurrency,
-      Set<String> activityQueues) {
+      Set<String> activityQueues,
+      int historyWarnAt,
+      int historyLimit) {
+
+    public static final int DEFAULT_HISTORY_WARN_AT = 10_000;
+    public static final int DEFAULT_HISTORY_LIMIT = 50_000;
+
+    public Settings(
+        String owner,
+        Duration lease,
+        Duration pollInterval,
+        int workflowConcurrency,
+        int activityConcurrency,
+        Set<String> activityQueues) {
+      this(
+          owner,
+          lease,
+          pollInterval,
+          workflowConcurrency,
+          activityConcurrency,
+          activityQueues,
+          DEFAULT_HISTORY_WARN_AT,
+          DEFAULT_HISTORY_LIMIT);
+    }
 
     public Settings(
         String owner,
@@ -84,6 +108,13 @@ public final class Worker {
                 + " for workflows and "
                 + activityConcurrency
                 + " for activities");
+      }
+      if (historyWarnAt < 1 || historyLimit <= historyWarnAt) {
+        throw new IllegalArgumentException(
+            "the history limit must be above the warning level, which must be positive; was "
+                + historyWarnAt
+                + " and "
+                + historyLimit);
       }
     }
   }
@@ -352,6 +383,21 @@ public final class Worker {
   private void decide(ClaimedTask task) {
     try {
       DecisionInput input = store.loadDecision(task);
+      int historyLength = input.history().size() + input.inbox().size();
+      if (historyLength >= settings.historyLimit()) {
+        block(
+            task,
+            new IllegalStateException(
+                "workflow "
+                    + task.workflowId()
+                    + " has "
+                    + historyLength
+                    + " history events, which reaches the limit of "
+                    + settings.historyLimit()
+                    + ". Split long-running work into smaller workflows; terminate or rerun this"
+                    + " one"));
+        return;
+      }
       Optional<WorkflowDefinition<?, ?>> definition = workflows.find(input.workflowType());
       if (definition.isEmpty()) {
         block(
@@ -363,6 +409,7 @@ public final class Worker {
       List<Command> commands =
           workflowRuntime.decide(definition.get(), task.workflowId(), input.historyWithInbox());
       store.commitDecision(task, input, commands);
+      warnIfHistoryGrewLong(task, input.history().size(), historyLength + eventsAddedBy(commands));
     } catch (NonDeterminismException e) {
       block(task, e);
     } catch (WorkflowBlockedException e) {
@@ -370,6 +417,21 @@ public final class Worker {
     } catch (StaleTaskException e) {
       log.warn("discarded a decision for workflow {}: {}", task.workflowId(), e.getMessage());
     }
+  }
+
+  private void warnIfHistoryGrewLong(ClaimedTask task, int before, int after) {
+    if (before < settings.historyWarnAt() && after >= settings.historyWarnAt()) {
+      log.warn(
+          "workflow {} has {} history events; it will be blocked at {}. Consider splitting it into"
+              + " smaller workflows",
+          task.workflowId(),
+          after,
+          settings.historyLimit());
+    }
+  }
+
+  private static int eventsAddedBy(List<Command> commands) {
+    return (int) commands.stream().filter(command -> !(command instanceof SetStatus)).count();
   }
 
   private void block(ClaimedTask task, Throwable error) {
