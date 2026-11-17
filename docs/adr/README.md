@@ -28,3 +28,4 @@ for the rules, and [the template](0000-template.md) for the format.
 | [0021](0021-cooperative-cancellation.md) | Cooperative cancellation | Accepted |
 | [0022](0022-parallel-steps-on-one-logical-thread.md) | Parallel steps on one logical thread | Accepted |
 | [0023](0023-operator-commands-work-directly-on-postgres.md) | Operator commands work directly on Postgres | Accepted |
+| [0024](0024-retention-and-size-limits.md) | Retention and size limits | Accepted |

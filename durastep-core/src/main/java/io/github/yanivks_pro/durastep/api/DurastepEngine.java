@@ -12,11 +12,13 @@ import io.github.yanivks_pro.durastep.store.CrashPoints;
 import io.github.yanivks_pro.durastep.store.DatabaseHealth;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import io.github.yanivks_pro.durastep.store.NotificationListener;
+import io.github.yanivks_pro.durastep.worker.Retention;
 import io.github.yanivks_pro.durastep.worker.Worker;
 import java.time.Duration;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
@@ -52,6 +54,7 @@ public final class DurastepEngine implements AutoCloseable {
   private final NotificationListener listener;
   private final DatabaseHealth health = new DatabaseHealth();
   private final Duration shutdownGrace;
+  private final Optional<Retention> retention;
 
   private DurastepEngine(Builder builder) {
     this.dataSource = Objects.requireNonNull(builder.dataSource, "a dataSource is required");
@@ -81,6 +84,7 @@ public final class DurastepEngine implements AutoCloseable {
     this.listener =
         new NotificationListener(dataSource, store.notificationChannel(), worker::wake, health);
     this.shutdownGrace = builder.shutdownGrace;
+    this.retention = builder.retention.map(settings -> new Retention(store, settings));
   }
 
   /**
@@ -109,6 +113,7 @@ public final class DurastepEngine implements AutoCloseable {
     }
     listener.start();
     worker.start();
+    retention.ifPresent(Retention::start);
   }
 
   /**
@@ -129,6 +134,9 @@ public final class DurastepEngine implements AutoCloseable {
    * @throws InterruptedException if the calling thread is interrupted while waiting
    */
   public void stop() throws InterruptedException {
+    if (retention.isPresent()) {
+      retention.get().stop();
+    }
     worker.stop(shutdownGrace);
     listener.stop();
   }
@@ -166,6 +174,8 @@ public final class DurastepEngine implements AutoCloseable {
     private int maxPayloadSize = LimitedPayloadConverter.DEFAULT_LIMIT;
     private int historyWarnAt = Worker.Settings.DEFAULT_HISTORY_WARN_AT;
     private int historyLimit = Worker.Settings.DEFAULT_HISTORY_LIMIT;
+    private Optional<Retention.Settings> retention =
+        Optional.of(Retention.Settings.keepingFor(Duration.ofDays(30)));
     private final WorkflowRegistry workflows = new WorkflowRegistry();
     private final ActivityRegistry activities = new ActivityRegistry();
 
@@ -341,6 +351,31 @@ public final class DurastepEngine implements AutoCloseable {
         throw new IllegalArgumentException("maxPayloadSize must be positive, was " + bytes);
       }
       this.maxPayloadSize = bytes;
+      return this;
+    }
+
+    /**
+     * Sets how long finished workflows are kept. A background job deletes completed, failed and
+     * cancelled workflows that closed longer ago than this, with their history, in small batches
+     * and on one engine at a time. Running workflows are never deleted. Defaults to 30 days.
+     *
+     * @param keepFor how long to keep finished workflows, more than zero
+     * @return this builder
+     * @throws IllegalArgumentException if {@code keepFor} is not positive
+     */
+    public Builder retention(Duration keepFor) {
+      this.retention = Optional.of(Retention.Settings.keepingFor(keepFor));
+      return this;
+    }
+
+    /**
+     * Keeps finished workflows forever, for example when they must be kept for audits. Without
+     * retention, the database grows with every workflow.
+     *
+     * @return this builder
+     */
+    public Builder noRetention() {
+      this.retention = Optional.empty();
       return this;
     }
 

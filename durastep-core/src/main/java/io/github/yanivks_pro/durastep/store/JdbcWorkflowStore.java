@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.regex.Pattern;
 import javax.sql.DataSource;
@@ -68,6 +69,7 @@ public final class JdbcWorkflowStore {
   private final String inbox;
   private final String timers;
   private final String channel;
+  private final String retentionLock;
 
   public JdbcWorkflowStore(DataSource dataSource) {
     this(dataSource, DEFAULT_SCHEMA);
@@ -85,6 +87,7 @@ public final class JdbcWorkflowStore {
     this.transactions = new Transactions(dataSource);
     this.crashPoints = crashPoints;
     this.workflows = schema + ".workflows";
+    this.retentionLock = "durastep retention " + schema;
     this.history = schema + ".history_events";
     this.tasks = schema + ".tasks";
     this.inbox = schema + ".inbox";
@@ -872,6 +875,35 @@ public final class JdbcWorkflowStore {
             : Optional.empty();
       }
     }
+  }
+
+  public OptionalInt deleteFinishedWorkflows(Duration closedBefore, int limit) {
+    return transactions.inTransaction(
+        "delete finished workflows",
+        connection -> {
+          try (PreparedStatement lock =
+              connection.prepareStatement("SELECT pg_try_advisory_xact_lock(hashtext(?))")) {
+            lock.setString(1, retentionLock);
+            try (ResultSet row = lock.executeQuery()) {
+              row.next();
+              if (!row.getBoolean(1)) {
+                return OptionalInt.empty();
+              }
+            }
+          }
+          return OptionalInt.of(
+              update(
+                  connection,
+                  "DELETE FROM "
+                      + workflows
+                      + " WHERE id IN (SELECT id FROM "
+                      + workflows
+                      + " WHERE state <> 'RUNNING'"
+                      + " AND closed_at < now() - ? * interval '1 millisecond'"
+                      + " ORDER BY closed_at LIMIT ? FOR UPDATE SKIP LOCKED)",
+                  closedBefore.toMillis(),
+                  limit));
+        });
   }
 
   public Optional<StoredWorkflow> find(String workflowId) {
