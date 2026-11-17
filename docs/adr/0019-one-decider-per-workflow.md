@@ -26,6 +26,9 @@ A workflow has at most one decision task, and that task is processed by one work
 - Every transaction that touches both takes the same order of locks: first the workflow's decision task, then
   the workflow row. Signals and cancellations wake the decider before they read or change the workflow, so they
   wait for a decision being saved instead of deadlocking with it, and see whether it finished the workflow.
+  Saving an activity's result takes the decision task's lock first for the same reason. Timers are fired in
+  batches, so a decision that finishes a workflow skips timer rows another transaction is firing, and that
+  transaction removes what it added once it sees the workflow has finished.
 
 ## Alternatives considered
 

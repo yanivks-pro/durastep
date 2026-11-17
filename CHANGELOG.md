@@ -18,6 +18,12 @@ All notable changes to Durastep are recorded here. The format follows
   workflow's history; `client.actingAs(name)` sets who, by default the operating system user. A terminated
   workflow's `WorkflowCancelledException.reason()` says who terminated it and why.
 
+### Fixed
+
+- An activity result or a timer that arrived while its workflow was finishing could deadlock with the decision
+  that finished it. Postgres aborted one of the two and the work was retried, so nothing was lost, but it
+  showed up as errors. Both now take their locks in the same order as decisions.
+
 ## [0.4.0] - 2026-11-16
 
 ### Added
