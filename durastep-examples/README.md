@@ -79,6 +79,25 @@ prints as it changes. In the story the waits are days; in the demo they are thre
   5.28s  finance     paid 12000 cents to Ada
 ```
 
+## Watch it in Grafana
+
+The load generator runs a steady mix of all three workflows, with flaky payments, sold-out cars and slow
+approvers, and serves its metrics for Prometheus. Start Postgres, Prometheus and Grafana, then the load:
+
+```bash
+docker compose --profile observability up -d --wait
+./mvnw -q install -Dmaven.test.skip=true
+./mvnw -q -pl durastep-examples exec:java -Dexample=load
+```
+
+Open [http://localhost:3000](http://localhost:3000): the **Durastep** dashboard shows workflows started and
+finished, running and blocked workflows, waiting work and its age, activity attempts by outcome, the 95th
+percentile of activity and decision times, timer lateness, lease takeovers and rejected late results.
+Prometheus is on [http://localhost:9090](http://localhost:9090), and the raw metrics on
+[http://localhost:8081/metrics](http://localhost:8081/metrics). Stop the load with Ctrl-C, or run it for a while
+with `-Dminutes=5`.
+
 ## Tests
 
-Each scenario runs end to end against a real Postgres in `*ExampleIT`, as part of `./mvnw verify`.
+Each scenario runs end to end against a real Postgres in `*ExampleIT`, as part of `./mvnw verify`. Another test checks that every
+metric the Grafana dashboard queries is served by the load generator.

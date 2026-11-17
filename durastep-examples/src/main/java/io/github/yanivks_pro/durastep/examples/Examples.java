@@ -1,10 +1,14 @@
 package io.github.yanivks_pro.durastep.examples;
 
 import io.github.yanivks_pro.durastep.examples.expense.ExpenseExample;
+import io.github.yanivks_pro.durastep.examples.load.LoadGenerator;
 import io.github.yanivks_pro.durastep.examples.order.OrderExample;
 import io.github.yanivks_pro.durastep.examples.trip.TripExample;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Locale;
+import java.util.concurrent.CountDownLatch;
+import javax.sql.DataSource;
 import org.postgresql.ds.PGSimpleDataSource;
 
 public final class Examples {
@@ -27,12 +31,29 @@ public final class Examples {
       case "expense" ->
           ExpenseExample.run(
               dataSource, scenario(ExpenseExample.Scenario.class, scenario), narrator);
+      case "load" -> runLoad(dataSource, narrator);
       default -> {
-        System.out.println("Choose an example with -Dexample=order|trip|expense");
+        System.out.println("Choose an example with -Dexample=order|trip|expense|load");
         System.out.println("  order:   -Dscenario=" + names(OrderExample.Scenario.class));
         System.out.println("  trip:    -Dscenario=" + names(TripExample.Scenario.class));
         System.out.println("  expense: -Dscenario=" + names(ExpenseExample.Scenario.class));
+        System.out.println("  load:    -Dminutes=N (default: until stopped) -Dport=8081");
       }
+    }
+  }
+
+  private static void runLoad(DataSource dataSource, Narrator narrator) throws Exception {
+    int port = Integer.parseInt(System.getProperty("port", "8081"));
+    String minutes = System.getProperty("minutes", "");
+    LoadGenerator load = LoadGenerator.start(dataSource, port, narrator);
+    try {
+      if (minutes.isBlank()) {
+        new CountDownLatch(1).await();
+      } else {
+        Thread.sleep(Duration.ofMinutes(Long.parseLong(minutes)));
+      }
+    } finally {
+      load.stop();
     }
   }
 
