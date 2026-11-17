@@ -16,6 +16,9 @@ All notable changes to Durastep are recorded here. The format follows
 - Payload encryption: `PayloadCodec`, with `AesGcmPayloadCodec` as the reference. Inputs, arguments, results and
   signals are stored as encrypted envelopes that name their key, so keys can be rotated while workflows run.
   Engines, clients, the testkit and the Spring Boot starter take the codec; the CLI shows `[encrypted]`.
+- A security guide, `docs/security.md`: secrets and workflow data, a dedicated database user with the exact
+  privileges (tested as written), TLS, encryption and key rotation, logs and retention. A test checks that no
+  workflow data reaches the logs at any level. `SECURITY.md` explains how to report a vulnerability.
 
 ## [0.5.0] - 2026-11-17
 
