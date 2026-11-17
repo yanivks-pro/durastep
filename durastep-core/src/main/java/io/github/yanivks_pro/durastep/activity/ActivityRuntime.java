@@ -11,11 +11,13 @@ import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.Failure;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import org.slf4j.MDC;
 
 public final class ActivityRuntime {
 
@@ -70,11 +72,15 @@ public final class ActivityRuntime {
                     new RunningActivity(
                         workflowId, scheduledSeq, heartbeat, timeout, System::nanoTime))
             .orElseGet(() -> new RunningActivity(workflowId, scheduledSeq));
+    Map<String, String> logContext = MDC.getCopyOfContextMap();
     Thread attempt =
         Thread.ofVirtual()
             .name("durastep-activity-" + context.idempotencyKey())
             .start(
                 () -> {
+                  if (logContext != null) {
+                    MDC.setContextMap(logContext);
+                  }
                   try {
                     outcome.complete(
                         ActivityScope.callWith(

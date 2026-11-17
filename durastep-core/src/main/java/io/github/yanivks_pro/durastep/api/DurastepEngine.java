@@ -13,6 +13,7 @@ import io.github.yanivks_pro.durastep.store.DatabaseHealth;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import io.github.yanivks_pro.durastep.store.NotificationListener;
 import io.github.yanivks_pro.durastep.worker.Retention;
+import io.github.yanivks_pro.durastep.worker.SafeEngineListener;
 import io.github.yanivks_pro.durastep.worker.Worker;
 import java.time.Duration;
 import java.util.HexFormat;
@@ -62,6 +63,7 @@ public final class DurastepEngine implements AutoCloseable {
     this.applyMigrations = builder.applyMigrations;
     PayloadConverter converter =
         new LimitedPayloadConverter(new JsonPayloadConverter(), builder.maxPayloadSize);
+    EngineListener listener = SafeEngineListener.around(builder.listener);
     JdbcWorkflowStore store = new JdbcWorkflowStore(dataSource, schema);
     this.worker =
         new Worker(
@@ -79,8 +81,10 @@ public final class DurastepEngine implements AutoCloseable {
                 builder.historyWarnAt,
                 builder.historyLimit),
             CrashPoints.NONE,
-            health);
-    this.client = new StoreBackedClient(store, converter, StoreBackedClient.RESULT_POLL_INTERVAL);
+            health,
+            listener);
+    this.client =
+        new StoreBackedClient(store, converter, StoreBackedClient.RESULT_POLL_INTERVAL, listener);
     this.listener =
         new NotificationListener(dataSource, store.notificationChannel(), worker::wake, health);
     this.shutdownGrace = builder.shutdownGrace;
@@ -172,6 +176,7 @@ public final class DurastepEngine implements AutoCloseable {
     private Set<String> activityQueues = Set.of(JdbcWorkflowStore.DEFAULT_QUEUE);
     private Duration shutdownGrace = Duration.ofSeconds(30);
     private int maxPayloadSize = LimitedPayloadConverter.DEFAULT_LIMIT;
+    private EngineListener listener = EngineListener.NONE;
     private int historyWarnAt = Worker.Settings.DEFAULT_HISTORY_WARN_AT;
     private int historyLimit = Worker.Settings.DEFAULT_HISTORY_LIMIT;
     private Optional<Retention.Settings> retention =
@@ -351,6 +356,18 @@ public final class DurastepEngine implements AutoCloseable {
         throw new IllegalArgumentException("maxPayloadSize must be positive, was " + bytes);
       }
       this.maxPayloadSize = bytes;
+      return this;
+    }
+
+    /**
+     * Sets a listener for the engine's events, for metrics or tracing. The {@code
+     * durastep-micrometer} module provides one that records Micrometer meters.
+     *
+     * @param listener the listener
+     * @return this builder
+     */
+    public Builder listener(EngineListener listener) {
+      this.listener = Objects.requireNonNull(listener, "listener");
       return this;
     }
 

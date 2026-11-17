@@ -3,6 +3,7 @@ package io.github.yanivks_pro.durastep.store;
 import io.github.yanivks_pro.durastep.activity.ActivityResult;
 import io.github.yanivks_pro.durastep.activity.ActivityResult.Completed;
 import io.github.yanivks_pro.durastep.activity.ActivityResult.Failed;
+import io.github.yanivks_pro.durastep.api.EngineStats;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
 import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.runtime.Command;
@@ -39,8 +40,10 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -161,22 +164,24 @@ public final class JdbcWorkflowStore {
         connection -> {
           try (PreparedStatement statement =
               connection.prepareStatement(
-                  "UPDATE "
-                      + tasks
-                      + " SET lease_owner = ?,"
-                      + " lease_until = now() + ? * interval '1 millisecond',"
-                      + " fencing_token = fencing_token + 1"
-                      + " WHERE id IN (SELECT id FROM "
+                  "WITH due AS (SELECT id, lease_until IS NOT NULL AS taken_over FROM "
                       + tasks
                       + " WHERE kind = ? AND queue = ANY(?) AND visible_at <= now()"
                       + " AND (lease_until IS NULL OR lease_until < now())"
                       + " ORDER BY visible_at, id LIMIT ? FOR UPDATE SKIP LOCKED)"
-                      + " RETURNING id, workflow_id, activity_seq, attempt, fencing_token")) {
-            statement.setString(1, owner);
-            statement.setLong(2, lease.toMillis());
-            statement.setString(3, kind.name());
-            statement.setArray(4, connection.createArrayOf("text", queues.toArray()));
-            statement.setInt(5, limit);
+                      + " UPDATE "
+                      + tasks
+                      + " t SET lease_owner = ?,"
+                      + " lease_until = now() + ? * interval '1 millisecond',"
+                      + " fencing_token = t.fencing_token + 1"
+                      + " FROM due WHERE t.id = due.id"
+                      + " RETURNING t.id, t.workflow_id, t.activity_seq, t.attempt,"
+                      + " t.fencing_token, due.taken_over")) {
+            statement.setString(1, kind.name());
+            statement.setArray(2, connection.createArrayOf("text", queues.toArray()));
+            statement.setInt(3, limit);
+            statement.setString(4, owner);
+            statement.setLong(5, lease.toMillis());
             List<ClaimedTask> claimed = new ArrayList<>();
             try (ResultSet row = statement.executeQuery()) {
               while (row.next()) {
@@ -188,7 +193,8 @@ public final class JdbcWorkflowStore {
                         row.getObject("activity_seq", Integer.class),
                         row.getInt("attempt"),
                         row.getLong("fencing_token"),
-                        owner));
+                        owner,
+                        row.getBoolean("taken_over")));
               }
             }
             return claimed;
@@ -549,12 +555,13 @@ public final class JdbcWorkflowStore {
     notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
   }
 
-  public int fireDueTimers(int limit) {
+  public List<Duration> fireDueTimers(int limit) {
     return transactions.inTransaction(
         "fire due timers",
         connection -> {
           List<String> workflowIds = new ArrayList<>();
           List<TimerFired> fired = new ArrayList<>();
+          List<Duration> lateness = new ArrayList<>();
           try (PreparedStatement statement =
               connection.prepareStatement(
                   "DELETE FROM "
@@ -562,12 +569,14 @@ public final class JdbcWorkflowStore {
                       + " WHERE id IN (SELECT id FROM "
                       + timers
                       + " WHERE fire_at <= now() ORDER BY fire_at LIMIT ? FOR UPDATE SKIP LOCKED)"
-                      + " RETURNING workflow_id, seq")) {
+                      + " RETURNING workflow_id, seq,"
+                      + " GREATEST(0, (EXTRACT(EPOCH FROM now() - fire_at) * 1000)::bigint)")) {
             statement.setInt(1, limit);
             try (ResultSet row = statement.executeQuery()) {
               while (row.next()) {
                 workflowIds.add(row.getString(1));
                 fired.add(new TimerFired(row.getInt(2)));
+                lateness.add(Duration.ofMillis(row.getLong(3)));
               }
             }
           }
@@ -597,7 +606,7 @@ public final class JdbcWorkflowStore {
               notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
             }
           }
-          return fired.size();
+          return lateness;
         });
   }
 
@@ -875,6 +884,48 @@ public final class JdbcWorkflowStore {
             : Optional.empty();
       }
     }
+  }
+
+  public EngineStats stats() {
+    return transactions.inTransaction(
+        "read statistics",
+        connection -> {
+          long running;
+          long blocked;
+          try (PreparedStatement statement =
+                  connection.prepareStatement(
+                      "SELECT count(*), count(*) FILTER (WHERE blocked) FROM "
+                          + workflows
+                          + " WHERE state = 'RUNNING'");
+              ResultSet row = statement.executeQuery()) {
+            row.next();
+            running = row.getLong(1);
+            blocked = row.getLong(2);
+          }
+          long readyDecisions = 0;
+          Map<String, Long> readyActivities = new HashMap<>();
+          long oldestMillis = 0;
+          try (PreparedStatement statement =
+                  connection.prepareStatement(
+                      "SELECT kind, queue, count(*),"
+                          + " (EXTRACT(EPOCH FROM now() - min(visible_at)) * 1000)::bigint FROM "
+                          + tasks
+                          + " WHERE visible_at <= now()"
+                          + " AND (lease_until IS NULL OR lease_until < now())"
+                          + " GROUP BY kind, queue");
+              ResultSet row = statement.executeQuery()) {
+            while (row.next()) {
+              if (TaskKind.WORKFLOW.name().equals(row.getString(1))) {
+                readyDecisions += row.getLong(3);
+              } else {
+                readyActivities.merge(row.getString(2), row.getLong(3), Long::sum);
+              }
+              oldestMillis = Math.max(oldestMillis, row.getLong(4));
+            }
+          }
+          return new EngineStats(
+              running, blocked, readyDecisions, readyActivities, Duration.ofMillis(oldestMillis));
+        });
   }
 
   public OptionalInt deleteFinishedWorkflows(Duration closedBefore, int limit) {

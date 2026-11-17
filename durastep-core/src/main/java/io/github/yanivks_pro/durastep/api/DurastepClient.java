@@ -126,6 +126,14 @@ public interface DurastepClient {
   List<WorkflowDescription> list(WorkflowQuery query);
 
   /**
+   * Counts all workflows and pending work in the database: how many workflows run and how many are
+   * blocked, how much work waits for an engine, and how long the oldest has waited.
+   *
+   * @return a snapshot of the counts
+   */
+  EngineStats stats();
+
+  /**
    * Retries every blocked workflow now. See {@link WorkflowHandle#retryNow(String)}.
    *
    * @param reason why, for the audit trail of each workflow
