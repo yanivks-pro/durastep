@@ -28,6 +28,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -40,7 +41,8 @@ final class ReplayContext implements WorkflowContext {
       Object result,
       Throwable thrown,
       boolean suspensionCaught,
-      Throwable thrownAfterCatch) {}
+      Throwable thrownAfterCatch,
+      List<String> deadlocked) {}
 
   private enum Kind {
     RESULT,
@@ -66,6 +68,7 @@ final class ReplayContext implements WorkflowContext {
   private final Set<Integer> consumedSignals = new HashSet<>();
 
   private Branch main;
+  private int finishedBranches;
   private Branch current;
   private int cursor = 1;
   private boolean aborting;
@@ -91,19 +94,20 @@ final class ReplayContext implements WorkflowContext {
         Branch next = runnable.poll();
         takeTurn(next);
         if (next.finished) {
-          runnable.addAll(next.waiters);
-          next.waiters.clear();
+          wakeWaiters(next);
         }
       }
     } while (nonDeterminism == null && !main.finished && deliverNextResult());
     boolean mainFinished = main.finished;
+    List<String> deadlocked = mainFinished || nonDeterminism != null ? List.of() : deadlocked();
     Branch caught = stopUnfinishedBranches();
     return new Outcome(
         mainFinished,
         main.result,
         main.thrown,
         caught != null,
-        caught == null ? null : caught.thrown);
+        caught == null ? null : caught.thrown,
+        deadlocked);
   }
 
   @Override
@@ -374,14 +378,108 @@ final class ReplayContext implements WorkflowContext {
     throw new IllegalStateException("a branch waiting forever was resumed");
   }
 
-  private Object awaitBranch(Branch target) {
+  Promise<Void> allOf(List<Promise<?>> promises) {
+    List<Branch> targets = branchesOf(promises);
+    return new CombinedPromise<>(
+        () -> {
+          waitForAny(targets.stream().filter(target -> !target.finished).toList(), true);
+          targets.stream()
+              .filter(target -> target.thrown != null)
+              .min((a, b) -> Integer.compare(a.finishedOrder, b.finishedOrder))
+              .ifPresent(this::outcomeOf);
+          return null;
+        },
+        () -> targets.stream().allMatch(target -> target.finished));
+  }
+
+  <T> Promise<T> anyOf(List<Promise<? extends T>> promises) {
+    List<Branch> targets = branchesOf(promises);
+    if (targets.isEmpty()) {
+      throw new IllegalArgumentException("Promise.anyOf needs at least one promise");
+    }
+    return new CombinedPromise<>(
+        () -> {
+          if (targets.stream().noneMatch(target -> target.finished)) {
+            waitForAny(targets, false);
+          }
+          Branch first =
+              targets.stream()
+                  .filter(target -> target.finished)
+                  .min((a, b) -> Integer.compare(a.finishedOrder, b.finishedOrder))
+                  .orElseThrow();
+          @SuppressWarnings("unchecked")
+          T result = (T) outcomeOf(first);
+          return result;
+        },
+        () -> targets.stream().anyMatch(target -> target.finished));
+  }
+
+  private List<Branch> branchesOf(List<? extends Promise<?>> promises) {
+    List<Branch> targets = new ArrayList<>();
+    for (Promise<?> promise : promises) {
+      if (!(promise instanceof ReplayContext.BranchPromise<?> branchPromise)
+          || branchPromise.owner() != this) {
+        throw new IllegalArgumentException(
+            "Promise.allOf and Promise.anyOf only accept promises from ctx.async in this workflow");
+      }
+      targets.add(branchPromise.branch);
+    }
+    return targets;
+  }
+
+  private void waitForAny(List<Branch> targets, boolean untilAll) {
     if (aborting) {
       throw suspension;
     }
-    if (!target.finished) {
-      target.waiters.add(current);
-      endTurn(current);
+    List<Branch> open = new ArrayList<>(targets);
+    open.removeIf(target -> target.finished);
+    while (!open.isEmpty()) {
+      Branch waiting = current;
+      waiting.waitingForBranches = true;
+      open.forEach(target -> target.waiters.add(waiting));
+      endTurn(waiting);
+      open.forEach(target -> target.waiters.remove(waiting));
+      open.removeIf(target -> target.finished);
+      if (!untilAll) {
+        return;
+      }
     }
+  }
+
+  private void wakeWaiters(Branch finished) {
+    finished.finishedOrder = ++finishedBranches;
+    for (Branch waiter : finished.waiters) {
+      if (waiter.waitingForBranches) {
+        waiter.waitingForBranches = false;
+        runnable.add(waiter);
+      }
+    }
+    finished.waiters.clear();
+  }
+
+  private List<String> deadlocked() {
+    List<String> waitingForBranches = new ArrayList<>();
+    for (Branch branch : branches) {
+      if (branch.thread != null && !branch.finished) {
+        if (!branch.waitingForBranches) {
+          return List.of();
+        }
+        waitingForBranches.add(branch.id);
+      }
+    }
+    return waitingForBranches;
+  }
+
+  private Object awaitBranch(Branch target) {
+    if (!target.finished) {
+      waitForAny(List.of(target), true);
+    } else if (aborting) {
+      throw suspension;
+    }
+    return outcomeOf(target);
+  }
+
+  private Object outcomeOf(Branch target) {
     if (target.thrown instanceof RuntimeException e) {
       throw e;
     }
@@ -571,6 +669,8 @@ final class ReplayContext implements WorkflowContext {
     Throwable thrown;
     List<Option> options;
     Option delivered;
+    boolean waitingForBranches;
+    int finishedOrder;
 
     Branch(String id, Supplier<?> code, Instant now, long seed, boolean cancelled) {
       this.id = id;
@@ -589,7 +689,7 @@ final class ReplayContext implements WorkflowContext {
 
     void run() {
       try {
-        result = code.get();
+        result = ScopedValue.where(WorkflowScope.CURRENT, ReplayContext.this).call(code::get);
       } catch (Throwable error) {
         thrown = error;
       } finally {
@@ -606,6 +706,10 @@ final class ReplayContext implements WorkflowContext {
       this.branch = branch;
     }
 
+    ReplayContext owner() {
+      return ReplayContext.this;
+    }
+
     @Override
     @SuppressWarnings("unchecked")
     public T get() {
@@ -615,6 +719,26 @@ final class ReplayContext implements WorkflowContext {
     @Override
     public boolean isDone() {
       return branch.finished;
+    }
+  }
+
+  private static final class CombinedPromise<T> implements Promise<T> {
+    private final Supplier<T> waitForResult;
+    private final BooleanSupplier done;
+
+    CombinedPromise(Supplier<T> waitForResult, BooleanSupplier done) {
+      this.waitForResult = waitForResult;
+      this.done = done;
+    }
+
+    @Override
+    public T get() {
+      return waitForResult.get();
+    }
+
+    @Override
+    public boolean isDone() {
+      return done.getAsBoolean();
     }
   }
 }
