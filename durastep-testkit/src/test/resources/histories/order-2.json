@@ -1,0 +1,30 @@
+[ {
+  "seq" : 1,
+  "at" : "2026-11-17T09:05:00.000Z",
+  "type" : "WORKFLOW_STARTED",
+  "data" : "order-2"
+}, {
+  "seq" : 2,
+  "at" : "2026-11-17T09:05:00.100Z",
+  "type" : "ACTIVITY_SCHEDULED",
+  "data" : {
+    "activity" : "Shop.charge",
+    "arguments" : [ "order-2" ]
+  }
+}, {
+  "seq" : 3,
+  "at" : "2026-11-17T09:05:01.000Z",
+  "type" : "ACTIVITY_COMPLETED",
+  "data" : {
+    "result" : "ch_order-2",
+    "scheduledSeq" : 2
+  }
+}, {
+  "seq" : 4,
+  "at" : "2026-11-17T09:05:01.100Z",
+  "type" : "ACTIVITY_SCHEDULED",
+  "data" : {
+    "activity" : "Shop.email",
+    "arguments" : [ "order-2" ]
+  }
+} ]

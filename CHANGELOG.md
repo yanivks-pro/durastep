@@ -11,6 +11,8 @@ All notable changes to Durastep are recorded here. The format follows
 - Versioning: `ctx.version(changeId, maxVersion)` lets workflows that already went past a change keep the old
   code path while all others take the new one. The choice is recorded as a marker in the history, which does not
   change step numbers, and the CLI shows it in the timeline.
+- New module `durastep-testkit`: `WorkflowReplayer` replays histories saved with `durastep history <id> --json`
+  against new code in a unit test, and reports every history the change would break.
 
 ## [0.5.0] - 2026-11-17
 

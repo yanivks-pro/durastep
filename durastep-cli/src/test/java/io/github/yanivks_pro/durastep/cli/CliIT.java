@@ -10,6 +10,8 @@ import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowCancelledException;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
+import io.github.yanivks_pro.durastep.testkit.WorkflowReplayException;
+import io.github.yanivks_pro.durastep.testkit.WorkflowReplayer;
 import java.io.BufferedReader;
 import java.io.PrintWriter;
 import java.io.StringReader;
@@ -27,6 +29,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import tools.jackson.databind.JsonNode;
@@ -159,6 +162,27 @@ class CliIT {
     assertThat(history.out())
         .contains("SEQ", "WORKFLOW_STARTED", "ACTIVITY_SCHEDULED", "{\"result\":\"ch_order-1\",");
     matchesSnapshot("history", cli("history", "order-1", "--json"));
+  }
+
+  static final class ChangedOrder implements Workflow<String, String> {
+    @Override
+    public String run(WorkflowContext ctx, String order) {
+      ctx.sleep(Duration.ofSeconds(1));
+      return ctx.activities(Shop.class).charge(order);
+    }
+  }
+
+  @Test
+  void aSavedHistoryCanBeReplayedAgainstNewCodeWithTheTestkit(@TempDir Path histories)
+      throws Exception {
+    order("order-1");
+    Files.writeString(histories.resolve("order-1.json"), cli("history", "order-1", "--json").out());
+
+    WorkflowReplayer.of(Order.class, Order::new).replay(histories);
+    assertThatThrownBy(
+            () -> WorkflowReplayer.of(ChangedOrder.class, ChangedOrder::new).replay(histories))
+        .isInstanceOf(WorkflowReplayException.class)
+        .hasMessageContaining("called sleep at step 1, but its history has Shop.charge there");
   }
 
   @Test
