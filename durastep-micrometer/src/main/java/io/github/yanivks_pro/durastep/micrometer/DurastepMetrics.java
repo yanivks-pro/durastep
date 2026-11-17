@@ -14,12 +14,15 @@ import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,6 +53,7 @@ public final class DurastepMetrics implements EngineListener, AutoCloseable {
   private final CountDownLatch closed = new CountDownLatch(1);
   private volatile EngineStats stats = new EngineStats(0, 0, 0, Map.of(), Duration.ZERO);
   private MultiGauge readyTasks;
+  private final Map<Tags, AtomicLong> readyCounts = new ConcurrentHashMap<>();
   private Thread refresher;
 
   private DurastepMetrics(MeterRegistry registry) {
@@ -201,16 +205,20 @@ public final class DurastepMetrics implements EngineListener, AutoCloseable {
   private void refresh(DurastepClient client) {
     try {
       EngineStats latest = client.stats();
-      List<MultiGauge.Row<?>> rows = new ArrayList<>();
-      rows.add(
-          MultiGauge.Row.of(
-              Tags.of("kind", "decision", "queue", "default"), latest.readyDecisions()));
+      Map<Tags, Long> counts = new LinkedHashMap<>();
+      counts.put(Tags.of("kind", "decision", "queue", "default"), latest.readyDecisions());
       latest
           .readyActivities()
           .forEach(
-              (queue, count) ->
-                  rows.add(MultiGauge.Row.of(Tags.of("kind", "activity", "queue", queue), count)));
-      readyTasks.register(rows, true);
+              (queue, count) -> counts.put(Tags.of("kind", "activity", "queue", queue), count));
+      counts.forEach(
+          (tags, count) -> readyCounts.computeIfAbsent(tags, _ -> new AtomicLong()).set(count));
+      readyCounts.keySet().retainAll(counts.keySet());
+      List<MultiGauge.Row<?>> rows = new ArrayList<>();
+      for (Tags tags : counts.keySet()) {
+        rows.add(MultiGauge.Row.of(tags, readyCounts.get(tags), AtomicLong::get));
+      }
+      readyTasks.register(rows, false);
       stats = latest;
     } catch (RuntimeException e) {
       log.debug("could not read Durastep's counts; the gauges keep their last values", e);

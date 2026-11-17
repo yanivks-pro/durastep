@@ -7,6 +7,7 @@ import io.github.yanivks_pro.durastep.api.DurastepClient;
 import io.github.yanivks_pro.durastep.api.DurastepEngine;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
+import io.micrometer.core.instrument.search.MeterNotFoundException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -75,6 +76,7 @@ class DurastepMetricsIT {
 
       await()
           .atMost(WAIT)
+          .ignoreExceptionsInstanceOf(MeterNotFoundException.class)
           .untilAsserted(
               () -> {
                 assertThat(registry.get("durastep.workflows.running").gauge().value()).isEqualTo(1);
