@@ -17,6 +17,9 @@ All notable changes to Durastep are recorded here. The format follows
   `client.retryAllBlocked(reason)` and `client.rerun(id, reason)`. Each records who acted and why in the
   workflow's history; `client.actingAs(name)` sets who, by default the operating system user. A terminated
   workflow's `WorkflowCancelledException.reason()` says who terminated it and why.
+- Size limits: workflow data larger than 256 KB as JSON throws `PayloadTooLargeException`, with a tip to pass a
+  reference instead (`maxPayloadSize` on the builder). A workflow logs one warning when its history reaches
+  10,000 events and is blocked at 50,000 (`historyLimits`), so an operator can terminate or rerun it.
 
 ### Fixed
 

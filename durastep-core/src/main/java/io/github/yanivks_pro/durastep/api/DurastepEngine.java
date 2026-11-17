@@ -3,6 +3,7 @@ package io.github.yanivks_pro.durastep.api;
 import io.github.yanivks_pro.durastep.activity.ActivityRegistry;
 import io.github.yanivks_pro.durastep.activity.ActivityRuntime;
 import io.github.yanivks_pro.durastep.payload.JsonPayloadConverter;
+import io.github.yanivks_pro.durastep.payload.LimitedPayloadConverter;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
 import io.github.yanivks_pro.durastep.runtime.WorkflowDefinition;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRegistry;
@@ -56,7 +57,8 @@ public final class DurastepEngine implements AutoCloseable {
     this.dataSource = Objects.requireNonNull(builder.dataSource, "a dataSource is required");
     this.schema = builder.schema;
     this.applyMigrations = builder.applyMigrations;
-    PayloadConverter converter = new JsonPayloadConverter();
+    PayloadConverter converter =
+        new LimitedPayloadConverter(new JsonPayloadConverter(), builder.maxPayloadSize);
     JdbcWorkflowStore store = new JdbcWorkflowStore(dataSource, schema);
     this.worker =
         new Worker(
@@ -70,7 +72,9 @@ public final class DurastepEngine implements AutoCloseable {
                 SAFETY_POLL_INTERVAL,
                 builder.workflowConcurrency,
                 builder.activityConcurrency,
-                builder.activityQueues),
+                builder.activityQueues,
+                builder.historyWarnAt,
+                builder.historyLimit),
             CrashPoints.NONE,
             health);
     this.client = new StoreBackedClient(store, converter, StoreBackedClient.RESULT_POLL_INTERVAL);
@@ -159,6 +163,9 @@ public final class DurastepEngine implements AutoCloseable {
     private int activityConcurrency = 100;
     private Set<String> activityQueues = Set.of(JdbcWorkflowStore.DEFAULT_QUEUE);
     private Duration shutdownGrace = Duration.ofSeconds(30);
+    private int maxPayloadSize = LimitedPayloadConverter.DEFAULT_LIMIT;
+    private int historyWarnAt = Worker.Settings.DEFAULT_HISTORY_WARN_AT;
+    private int historyLimit = Worker.Settings.DEFAULT_HISTORY_LIMIT;
     private final WorkflowRegistry workflows = new WorkflowRegistry();
     private final ActivityRegistry activities = new ActivityRegistry();
 
@@ -296,6 +303,44 @@ public final class DurastepEngine implements AutoCloseable {
         names.add(ActivityOptions.requireQueueName(queue));
       }
       this.activityQueues = Set.copyOf(names);
+      return this;
+    }
+
+    /**
+     * Sets how long a workflow's history may grow. At {@code warnAt} events the engine logs a
+     * warning once; at {@code limit} events the workflow is blocked, so that an operator can
+     * terminate or rerun it. Defaults to 10,000 and 50,000. Every decision replays the whole
+     * history, so very long histories make a workflow slow.
+     *
+     * @param warnAt when to warn, at least 1
+     * @param limit when to block, more than {@code warnAt}
+     * @return this builder
+     * @throws IllegalArgumentException if the numbers are out of range
+     */
+    public Builder historyLimits(int warnAt, int limit) {
+      if (warnAt < 1 || limit <= warnAt) {
+        throw new IllegalArgumentException(
+            "historyLimits needs 1 <= warnAt < limit, was " + warnAt + " and " + limit);
+      }
+      this.historyWarnAt = warnAt;
+      this.historyLimit = limit;
+      return this;
+    }
+
+    /**
+     * Sets the largest size of a single piece of workflow data, such as an input, an activity's
+     * arguments or result, or a signal, measured as JSON. Defaults to 256 KB. Larger data throws
+     * {@link PayloadTooLargeException}.
+     *
+     * @param bytes the limit in bytes, at least 1
+     * @return this builder
+     * @throws IllegalArgumentException if {@code bytes} is not positive
+     */
+    public Builder maxPayloadSize(int bytes) {
+      if (bytes < 1) {
+        throw new IllegalArgumentException("maxPayloadSize must be positive, was " + bytes);
+      }
+      this.maxPayloadSize = bytes;
       return this;
     }
 

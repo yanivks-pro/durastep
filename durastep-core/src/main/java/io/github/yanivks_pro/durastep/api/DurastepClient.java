@@ -1,6 +1,7 @@
 package io.github.yanivks_pro.durastep.api;
 
 import io.github.yanivks_pro.durastep.payload.JsonPayloadConverter;
+import io.github.yanivks_pro.durastep.payload.LimitedPayloadConverter;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import java.util.List;
 import java.util.Objects;
@@ -34,7 +35,8 @@ public interface DurastepClient {
     Objects.requireNonNull(dataSource, "dataSource");
     return new StoreBackedClient(
         new JdbcWorkflowStore(dataSource, schema),
-        new JsonPayloadConverter(),
+        new LimitedPayloadConverter(
+            new JsonPayloadConverter(), LimitedPayloadConverter.DEFAULT_LIMIT),
         StoreBackedClient.RESULT_POLL_INTERVAL);
   }
 
