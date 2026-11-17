@@ -13,6 +13,7 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent.OperatorAction;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.VersionMarker;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCancelled;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
@@ -36,6 +37,7 @@ final class EventCodec {
   static final String SIGNAL = "SIGNAL";
   static final String CANCEL_REQUESTED = "CANCEL_REQUESTED";
   static final String OPERATOR_ACTION = "OPERATOR_ACTION";
+  static final String VERSION_MARKER = "VERSION_MARKER";
   static final String WORKFLOW_CANCELLED = "WORKFLOW_CANCELLED";
   static final String WORKFLOW_COMPLETED = "WORKFLOW_COMPLETED";
   static final String WORKFLOW_FAILED = "WORKFLOW_FAILED";
@@ -56,6 +58,7 @@ final class EventCodec {
       case SignalReceived ignored -> SIGNAL;
       case CancelRequested ignored -> CANCEL_REQUESTED;
       case OperatorAction ignored -> OPERATOR_ACTION;
+      case VersionMarker ignored -> VERSION_MARKER;
       case WorkflowCancelled ignored -> WORKFLOW_CANCELLED;
       case WorkflowCompleted ignored -> WORKFLOW_COMPLETED;
       case WorkflowFailed ignored -> WORKFLOW_FAILED;
@@ -95,6 +98,8 @@ final class EventCodec {
           object().put("name", signal.name()).set("payload", tree(signal.payload())).toString();
       case TimerFired fired -> object().put("startedSeq", fired.startedSeq()).toString();
       case CancelRequested ignored -> "{}";
+      case VersionMarker marker ->
+          object().put("changeId", marker.changeId()).put("version", marker.version()).toString();
       case OperatorAction action ->
           object()
               .put("action", action.action())
@@ -145,6 +150,11 @@ final class EventCodec {
       case TIMER_FIRED ->
           new TimerFired(mapper.readTree(payloadJson).required("startedSeq").asInt());
       case CANCEL_REQUESTED -> new CancelRequested();
+      case VERSION_MARKER -> {
+        JsonNode node = mapper.readTree(payloadJson);
+        yield new VersionMarker(
+            node.required("changeId").asString(), node.required("version").asInt());
+      }
       case OPERATOR_ACTION -> {
         JsonNode node = mapper.readTree(payloadJson);
         yield new OperatorAction(

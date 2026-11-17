@@ -28,6 +28,8 @@ public sealed interface Command {
 
   record SetStatus(String status) implements Command {}
 
+  record RecordVersion(String changeId, int version) implements Command {}
+
   record CompleteWorkflow(Payload result) implements Command {}
 
   record FailWorkflow(Failure failure) implements Command {}

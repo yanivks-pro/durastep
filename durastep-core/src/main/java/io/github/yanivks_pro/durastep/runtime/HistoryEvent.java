@@ -42,6 +42,8 @@ public sealed interface HistoryEvent {
 
   record OperatorAction(String action, String by, String reason) implements HistoryEvent {}
 
+  record VersionMarker(String changeId, int version) implements HistoryEvent {}
+
   record WorkflowCompleted(Payload result) implements HistoryEvent {}
 
   record WorkflowCancelled() implements HistoryEvent {}

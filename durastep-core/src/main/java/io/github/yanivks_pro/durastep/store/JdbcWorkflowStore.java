@@ -11,6 +11,7 @@ import io.github.yanivks_pro.durastep.runtime.Command;
 import io.github.yanivks_pro.durastep.runtime.Command.CancelWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
+import io.github.yanivks_pro.durastep.runtime.Command.RecordVersion;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
 import io.github.yanivks_pro.durastep.runtime.Command.SetStatus;
 import io.github.yanivks_pro.durastep.runtime.Command.StartTimer;
@@ -25,6 +26,7 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent.OperatorAction;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.VersionMarker;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCancelled;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
@@ -267,6 +269,15 @@ public final class JdbcWorkflowStore {
                       "UPDATE " + workflows + " SET status = ? WHERE id = ?",
                       setStatus.status(),
                       task.workflowId());
+              case RecordVersion marker -> {
+                seq++;
+                appendEvent(
+                    connection,
+                    task.workflowId(),
+                    seq,
+                    new VersionMarker(marker.changeId(), marker.version()),
+                    null);
+              }
               case ScheduleActivity schedule -> {
                 seq++;
                 appendEvent(
