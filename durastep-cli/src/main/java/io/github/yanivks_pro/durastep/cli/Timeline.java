@@ -42,6 +42,11 @@ final class Timeline {
       }
       case "SIGNAL" -> "received signal " + data.path("name").asString();
       case "CANCEL_REQUESTED" -> "asked to cancel";
+      case "VERSION_MARKER" ->
+          "uses version "
+              + data.path("version").asInt()
+              + " of "
+              + data.path("changeId").asString();
       case "OPERATOR_ACTION" ->
           data.path("action").asString()
               + " by "

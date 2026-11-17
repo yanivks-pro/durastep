@@ -8,6 +8,7 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent.OperatorAction;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.VersionMarker;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCancelled;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
@@ -26,6 +27,7 @@ record ReplayHistory(
     List<Step> steps,
     Map<String, List<Step>> stepsByBranch,
     List<HistoryEntry> signals,
+    Map<String, Integer> versions,
     HistoryEntry cancelRequest,
     boolean deadlinePassed) {
 
@@ -59,6 +61,7 @@ record ReplayHistory(
     List<HistoryEntry> stepsInOrder = new ArrayList<>();
     boolean deadlinePassed = false;
     List<HistoryEntry> signals = new ArrayList<>();
+    Map<String, Integer> versions = new HashMap<>();
     HistoryEntry cancelRequest = null;
     for (int i = 0; i < history.size(); i++) {
       HistoryEntry entry = history.get(i);
@@ -94,6 +97,7 @@ record ReplayHistory(
             recordOutcome(entry, fired.startedSeq(), TimerStarted.class, stepsBySeq, outcomeBySeq);
         case SignalReceived ignored -> signals.add(entry);
         case OperatorAction ignored -> {}
+        case VersionMarker marker -> versions.putIfAbsent(marker.changeId(), marker.version());
         case CancelRequested ignored -> {
           if (cancelRequest == null) {
             cancelRequest = entry;
@@ -120,6 +124,7 @@ record ReplayHistory(
         steps,
         Collections.unmodifiableMap(stepsByBranch),
         List.copyOf(signals),
+        Map.copyOf(versions),
         cancelRequest,
         deadlinePassed);
   }

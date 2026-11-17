@@ -16,6 +16,7 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent.OperatorAction;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.VersionMarker;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCancelled;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.WorkflowFailed;
@@ -48,6 +49,7 @@ class EventCodecTest {
         new TimerStarted(Duration.ofMinutes(5), null, "0.1"),
         new CancelRequested(),
         new OperatorAction("terminate", "alice", "customer fraud"),
+        new VersionMarker("send-sms-instead-of-email", 2),
         new WorkflowCancelled(),
         new TimerStarted(Duration.ofDays(3), "approval"),
         new SignalReceived("approval", new Payload("{\"by\":\"ana\"}")),

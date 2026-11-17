@@ -112,6 +112,36 @@ public interface WorkflowContext {
   Promise<Void> async(Runnable body);
 
   /**
+   * Lets running workflows keep their old code path after a deploy changes it, while workflows that
+   * reach this point for the first time take the new one. A workflow that already went past this
+   * point before the change gets {@link #DEFAULT_VERSION}; any other gets {@code maxVersion}, which
+   * is recorded in its history so that every replay returns the same value.
+   *
+   * <pre>{@code
+   * if (ctx.version("send-sms-instead-of-email", 1) >= 1) {
+   *   sms.send(order);
+   * } else {
+   *   mail.send(order);
+   * }
+   * }</pre>
+   *
+   * <p>The recorded version is not a step, so adding a version check does not change the step
+   * numbers of running workflows. Keep the old path until no running workflow uses it.
+   *
+   * @param changeId names the change; the same ID always returns the same version in one workflow
+   * @param maxVersion the version of the newest code path, at least 1
+   * @return {@link #DEFAULT_VERSION} for a workflow that went past this point before the change, or
+   *     the recorded or newest version otherwise
+   * @throws IllegalArgumentException if the change ID is blank or {@code maxVersion} is below 1
+   */
+  int version(String changeId, int maxVersion);
+
+  /**
+   * The version {@link #version} returns to workflows that went past a change before it existed.
+   */
+  int DEFAULT_VERSION = 0;
+
+  /**
    * Returns a new saga for undoing completed steps when a later one fails.
    *
    * @return an empty saga

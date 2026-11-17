@@ -7,6 +7,7 @@ import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.Promise;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
+import io.github.yanivks_pro.durastep.runtime.Command.RecordVersion;
 import io.github.yanivks_pro.durastep.runtime.Command.ScheduleActivity;
 import io.github.yanivks_pro.durastep.runtime.Command.StartTimer;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
@@ -20,8 +21,10 @@ import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Random;
@@ -66,6 +69,7 @@ final class ReplayContext implements WorkflowContext {
   private final Deque<Branch> runnable = new ArrayDeque<>();
   private final List<Command> newCommands = new ArrayList<>();
   private final Set<Integer> consumedSignals = new HashSet<>();
+  private final Map<String, Integer> versions = new HashMap<>();
 
   private Branch main;
   private int finishedBranches;
@@ -81,6 +85,33 @@ final class ReplayContext implements WorkflowContext {
     this.workflowId = workflowId;
     this.history = history;
     this.converter = converter;
+    this.versions.putAll(history.versions());
+  }
+
+  @Override
+  public int version(String changeId, int maxVersion) {
+    Objects.requireNonNull(changeId, "changeId");
+    if (changeId.isBlank()) {
+      throw new IllegalArgumentException("a change ID must not be blank");
+    }
+    if (maxVersion < 1) {
+      throw new IllegalArgumentException("maxVersion must be at least 1, was " + maxVersion);
+    }
+    if (aborting) {
+      throw suspension;
+    }
+    Integer known = versions.get(changeId);
+    if (known != null) {
+      return known;
+    }
+    Branch branch = current;
+    if (branch.nextStep < history.stepsOf(branch.id).size()) {
+      versions.put(changeId, DEFAULT_VERSION);
+      return DEFAULT_VERSION;
+    }
+    newCommands.add(new RecordVersion(changeId, maxVersion));
+    versions.put(changeId, maxVersion);
+    return maxVersion;
   }
 
   Outcome run(Supplier<?> mainCode) {

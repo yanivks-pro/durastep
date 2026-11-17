@@ -4,6 +4,14 @@ All notable changes to Durastep are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Versioning: `ctx.version(changeId, maxVersion)` lets workflows that already went past a change keep the old
+  code path while all others take the new one. The choice is recorded as a marker in the history, which does not
+  change step numbers, and the CLI shows it in the timeline.
+
 ## [0.5.0] - 2026-11-17
 
 ### Added
