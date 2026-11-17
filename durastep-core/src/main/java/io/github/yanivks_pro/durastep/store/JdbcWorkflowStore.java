@@ -31,6 +31,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Duration;
 import java.time.Instant;
@@ -47,6 +48,10 @@ import javax.sql.DataSource;
 public final class JdbcWorkflowStore {
 
   public static final String DEFAULT_SCHEMA = "durastep";
+  private static final String SELECT_WORKFLOW =
+      "SELECT id, type, state, result::text AS result, failure::text AS failure, status, blocked,"
+          + " created_at, closed_at";
+
   public static final String DEFAULT_QUEUE = "default";
 
   private static final Pattern SCHEMA_NAME = Pattern.compile("[a-z_][a-z0-9_]{0,62}");
@@ -670,28 +675,74 @@ public final class JdbcWorkflowStore {
         connection -> {
           try (PreparedStatement statement =
               connection.prepareStatement(
-                  "SELECT type, state, result::text, failure::text, status, blocked FROM "
-                      + workflows
-                      + " WHERE id = ?")) {
+                  SELECT_WORKFLOW + " FROM " + workflows + " WHERE id = ?")) {
             statement.setString(1, workflowId);
             try (ResultSet row = statement.executeQuery()) {
-              if (!row.next()) {
-                return Optional.empty();
-              }
-              String result = row.getString(3);
-              String failure = row.getString(4);
-              return Optional.of(
-                  new StoredWorkflow(
-                      workflowId,
-                      row.getString(1),
-                      WorkflowState.valueOf(row.getString(2)),
-                      result == null ? null : new Payload(result),
-                      failure == null ? null : codec.failure(failure),
-                      row.getString(5),
-                      row.getBoolean(6)));
+              return row.next() ? Optional.of(storedWorkflow(row)) : Optional.empty();
             }
           }
         });
+  }
+
+  public List<StoredWorkflow> list(
+      Optional<WorkflowState> state, Optional<String> type, Optional<Boolean> blocked, int limit) {
+    return transactions.inTransaction(
+        "list workflows",
+        connection -> {
+          List<String> conditions = new ArrayList<>();
+          List<Object> parameters = new ArrayList<>();
+          state.ifPresent(
+              wanted -> {
+                conditions.add("state = ?");
+                parameters.add(wanted.name());
+              });
+          type.ifPresent(
+              wanted -> {
+                conditions.add("type = ?");
+                parameters.add(wanted);
+              });
+          blocked.ifPresent(
+              wanted -> {
+                conditions.add("blocked = ?");
+                parameters.add(wanted);
+              });
+          String where = conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);
+          try (PreparedStatement statement =
+              connection.prepareStatement(
+                  SELECT_WORKFLOW
+                      + " FROM "
+                      + workflows
+                      + where
+                      + " ORDER BY created_at DESC, id LIMIT ?")) {
+            for (int i = 0; i < parameters.size(); i++) {
+              statement.setObject(i + 1, parameters.get(i));
+            }
+            statement.setInt(parameters.size() + 1, limit);
+            List<StoredWorkflow> found = new ArrayList<>();
+            try (ResultSet row = statement.executeQuery()) {
+              while (row.next()) {
+                found.add(storedWorkflow(row));
+              }
+            }
+            return found;
+          }
+        });
+  }
+
+  private StoredWorkflow storedWorkflow(ResultSet row) throws SQLException {
+    String result = row.getString("result");
+    String failure = row.getString("failure");
+    Timestamp closedAt = row.getTimestamp("closed_at");
+    return new StoredWorkflow(
+        row.getString("id"),
+        row.getString("type"),
+        WorkflowState.valueOf(row.getString("state")),
+        result == null ? null : new Payload(result),
+        failure == null ? null : codec.failure(failure),
+        row.getString("status"),
+        row.getBoolean("blocked"),
+        row.getTimestamp("created_at").toInstant(),
+        closedAt == null ? null : closedAt.toInstant());
   }
 
   private boolean fence(Connection connection, ClaimedTask task) throws SQLException {

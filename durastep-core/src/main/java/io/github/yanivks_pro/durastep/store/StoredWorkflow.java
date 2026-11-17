@@ -3,6 +3,7 @@ package io.github.yanivks_pro.durastep.store;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
 import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.runtime.Failure;
+import java.time.Instant;
 
 public record StoredWorkflow(
     String id,
@@ -11,4 +12,6 @@ public record StoredWorkflow(
     Payload result,
     Failure failure,
     String status,
-    boolean blocked) {}
+    boolean blocked,
+    Instant startedAt,
+    Instant closedAt) {}

@@ -1,7 +1,42 @@
 package io.github.yanivks_pro.durastep.api;
 
+import io.github.yanivks_pro.durastep.payload.JsonPayloadConverter;
+import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
+import java.util.List;
+import java.util.Objects;
+import javax.sql.DataSource;
+
 /** Starts workflows and finds existing ones. Obtained from {@link DurastepEngine#client()}. */
 public interface DurastepClient {
+
+  /**
+   * Connects to a Durastep database without running any workers, for applications that only start,
+   * signal or watch workflows while other processes run them. The schema must already exist; an
+   * engine creates it on start.
+   *
+   * @param dataSource where the workflows are stored
+   * @return a client for the {@code durastep} schema
+   */
+  static DurastepClient connect(DataSource dataSource) {
+    return connect(dataSource, JdbcWorkflowStore.DEFAULT_SCHEMA);
+  }
+
+  /**
+   * Connects to a Durastep database in the given schema without running any workers. See {@link
+   * #connect(DataSource)}.
+   *
+   * @param dataSource where the workflows are stored
+   * @param schema the schema the engines use
+   * @return a client for that schema
+   * @throws IllegalArgumentException if the schema name is not a plain identifier
+   */
+  static DurastepClient connect(DataSource dataSource, String schema) {
+    Objects.requireNonNull(dataSource, "dataSource");
+    return new StoreBackedClient(
+        new JdbcWorkflowStore(dataSource, schema),
+        new JsonPayloadConverter(),
+        StoreBackedClient.RESULT_POLL_INTERVAL);
+  }
 
   /**
    * Starts a workflow with a business ID chosen by the caller.
@@ -79,6 +114,14 @@ public interface DurastepClient {
    * @throws IllegalArgumentException if no workflow with this ID exists
    */
   boolean cancel(String workflowId);
+
+  /**
+   * Returns the workflows that match a query, newest first.
+   *
+   * @param query which workflows to return and how many
+   * @return a snapshot of each matching workflow
+   */
+  List<WorkflowDescription> list(WorkflowQuery query);
 
   /**
    * Returns a handle to an existing workflow.

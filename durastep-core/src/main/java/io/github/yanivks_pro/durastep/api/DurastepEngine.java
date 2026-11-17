@@ -42,7 +42,6 @@ import org.flywaydb.core.Flyway;
 public final class DurastepEngine implements AutoCloseable {
 
   private static final Duration SAFETY_POLL_INTERVAL = Duration.ofSeconds(1);
-  private static final Duration RESULT_POLL_INTERVAL = Duration.ofMillis(100);
 
   private final DataSource dataSource;
   private final String schema;
@@ -74,7 +73,7 @@ public final class DurastepEngine implements AutoCloseable {
                 builder.activityQueues),
             CrashPoints.NONE,
             health);
-    this.client = new StoreBackedClient(store, converter, RESULT_POLL_INTERVAL);
+    this.client = new StoreBackedClient(store, converter, StoreBackedClient.RESULT_POLL_INTERVAL);
     this.listener =
         new NotificationListener(dataSource, store.notificationChannel(), worker::wake, health);
     this.shutdownGrace = builder.shutdownGrace;

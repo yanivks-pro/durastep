@@ -1,6 +1,7 @@
 package io.github.yanivks_pro.durastep.api;
 
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -37,4 +38,43 @@ public interface WorkflowHandle<O> {
    * @throws InterruptedException if the waiting thread was interrupted
    */
   O result(Duration timeout) throws TimeoutException, InterruptedException;
+
+  /**
+   * Waits for the workflow to finish without blocking the caller. The future completes with the
+   * result, or exceptionally with {@link WorkflowFailedException} or {@link
+   * WorkflowCancelledException}. Cancelling the future stops waiting; the workflow carries on.
+   *
+   * @return a future of the workflow's result
+   */
+  CompletableFuture<O> resultAsync();
+
+  /**
+   * Sends a signal to this workflow. See {@link DurastepClient#signal(String, String, Object)}.
+   *
+   * @param name the signal's name
+   * @param payload the data to send, converted to JSON
+   * @throws IllegalStateException if the workflow has already finished
+   */
+  void signal(String name, Object payload);
+
+  /**
+   * Sends a signal to this workflow at most once per request ID. See {@link
+   * DurastepClient#signal(String, String, Object, String)}.
+   *
+   * @param name the signal's name
+   * @param payload the data to send, converted to JSON
+   * @param requestId an ID that makes retried sends safe
+   * @return {@code true} if the signal was accepted now, {@code false} if this request ID was
+   *     already accepted
+   * @throws IllegalStateException if the workflow has already finished
+   */
+  boolean signal(String name, Object payload, String requestId);
+
+  /**
+   * Asks this workflow to stop. See {@link DurastepClient#cancel(String)}.
+   *
+   * @return {@code true} if the request was accepted now, {@code false} if the workflow had already
+   *     finished or been asked to cancel
+   */
+  boolean cancel();
 }

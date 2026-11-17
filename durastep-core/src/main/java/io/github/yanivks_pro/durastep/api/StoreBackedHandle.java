@@ -5,12 +5,16 @@ import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import io.github.yanivks_pro.durastep.store.StoredWorkflow;
 import java.lang.reflect.Type;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 
 final class StoreBackedHandle<O> implements WorkflowHandle<O> {
 
+  private static final Duration ASYNC_WAIT_SLICE = Duration.ofSeconds(1);
+
   private final String workflowId;
   private final Type resultType;
+  private final StoreBackedClient client;
   private final JdbcWorkflowStore store;
   private final PayloadConverter converter;
   private final Duration pollInterval;
@@ -18,11 +22,13 @@ final class StoreBackedHandle<O> implements WorkflowHandle<O> {
   StoreBackedHandle(
       String workflowId,
       Type resultType,
+      StoreBackedClient client,
       JdbcWorkflowStore store,
       PayloadConverter converter,
       Duration pollInterval) {
     this.workflowId = workflowId;
     this.resultType = resultType;
+    this.client = client;
     this.store = store;
     this.converter = converter;
     this.pollInterval = pollInterval;
@@ -39,8 +45,47 @@ final class StoreBackedHandle<O> implements WorkflowHandle<O> {
         store
             .find(workflowId)
             .orElseThrow(() -> new IllegalStateException("workflow " + workflowId + " is gone"));
-    return new WorkflowDescription(
-        workflowId, workflow.type(), workflow.state(), workflow.status(), workflow.blocked());
+    return StoreBackedClient.describe(workflow);
+  }
+
+  @Override
+  public CompletableFuture<O> resultAsync() {
+    CompletableFuture<O> future = new CompletableFuture<>();
+    Thread.ofVirtual()
+        .name("durastep-result-" + workflowId)
+        .start(
+            () -> {
+              while (!future.isDone()) {
+                try {
+                  future.complete(result(ASYNC_WAIT_SLICE));
+                } catch (TimeoutException stillRunning) {
+                  if (future.isCancelled()) {
+                    return;
+                  }
+                } catch (InterruptedException e) {
+                  Thread.currentThread().interrupt();
+                  future.completeExceptionally(e);
+                } catch (RuntimeException e) {
+                  future.completeExceptionally(e);
+                }
+              }
+            });
+    return future;
+  }
+
+  @Override
+  public void signal(String name, Object payload) {
+    client.signal(workflowId, name, payload);
+  }
+
+  @Override
+  public boolean signal(String name, Object payload, String requestId) {
+    return client.signal(workflowId, name, payload, requestId);
+  }
+
+  @Override
+  public boolean cancel() {
+    return client.cancel(workflowId);
   }
 
   @Override
