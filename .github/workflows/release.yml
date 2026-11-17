@@ -46,6 +46,7 @@ jobs:
             --title "Durastep $VERSION" \
             --notes-file release-notes.md \
             "durastep-core/target/durastep-core-$VERSION.jar" \
+            "durastep-testkit/target/durastep-testkit-$VERSION.jar" \
             "durastep-micrometer/target/durastep-micrometer-$VERSION.jar" \
             "durastep-spring-boot-starter/target/durastep-spring-boot-starter-$VERSION.jar" \
             "durastep-cli/target/durastep-cli-$VERSION.jar"

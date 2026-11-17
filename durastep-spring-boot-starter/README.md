@@ -6,7 +6,7 @@ Runs Durastep inside a Spring Boot 4 application, using the application's `DataS
 <dependency>
   <groupId>io.github.yanivks-pro</groupId>
   <artifactId>durastep-spring-boot-starter</artifactId>
-  <version>0.5.0</version>
+  <version>0.6.0</version>
 </dependency>
 ```
 

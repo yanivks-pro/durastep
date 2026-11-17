@@ -5,7 +5,7 @@ whether or not your application is running.
 
 ```bash
 ./mvnw -q install -Dmaven.test.skip=true
-alias durastep='java -jar durastep-cli/target/durastep-cli-0.5.0.jar'
+alias durastep='java -jar durastep-cli/target/durastep-cli-0.6.0.jar'
 durastep --help
 ```
 
