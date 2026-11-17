@@ -480,6 +480,9 @@ final class ReplayContext implements WorkflowContext {
   }
 
   private Object outcomeOf(Branch target) {
+    if (target.thrown instanceof CancelledException) {
+      current.cancelled = true;
+    }
     if (target.thrown instanceof RuntimeException e) {
       throw e;
     }

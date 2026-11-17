@@ -200,6 +200,32 @@ class ParallelTest {
   }
 
   @Test
+  void codeThatReceivesACancellationFromABranchCleansUpWithoutBeingCancelledAgain() {
+    WorkflowDefinition<String, String> cleansUpAfterABranch =
+        new WorkflowDefinition<>(
+            "CleansUpAfterABranch",
+            String.class,
+            () ->
+                (ctx, trip) -> {
+                  Trips trips = ctx.activities(Trips.class);
+                  try {
+                    return ctx.async(() -> trips.bookFlight(trip)).get();
+                  } catch (CancelledException e) {
+                    trips.cancelFlight(trip);
+                    trips.cancelHotel(trip);
+                    throw e;
+                  }
+                });
+    History cancelled =
+        History.startedWith("trip-1")
+            .scheduledIn(FLIGHT, "Trips.bookFlight", "trip-1")
+            .cancelRequested();
+
+    assertThat(decide(cleansUpAfterABranch, cancelled))
+        .containsExactly(schedule("Trips.cancelFlight", HistoryEvent.MAIN_BRANCH, "trip-1"));
+  }
+
+  @Test
   void aBranchStartedDuringCleanupIsNotCancelledAgain() {
     WorkflowDefinition<String, String> cleansUpInABranch =
         new WorkflowDefinition<>(

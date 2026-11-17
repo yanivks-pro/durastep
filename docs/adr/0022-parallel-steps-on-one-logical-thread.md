@@ -31,7 +31,8 @@ Branches of workflow code take turns on one logical thread, and receive results 
   `Promise.anyOf` returns the branch that finished first in the history.
 - Each branch has its own clock and random numbers. Only the main code may wait for signals. A cancellation
   reaches every branch at its next wait point, but branches started during cleanup are not cancelled again
-  ([ADR-0021](0021-cooperative-cancellation.md)). When the main code finishes, the workflow ends and branches
+  ([ADR-0021](0021-cooperative-cancellation.md)); code that receives a branch's `CancelledException` through
+  `get()` has received the cancellation too, so its cleanup runs. When the main code finishes, the workflow ends and branches
   that are still waiting are dropped. Branches that only wait for each other block the workflow with a message.
 
 ## Alternatives considered
