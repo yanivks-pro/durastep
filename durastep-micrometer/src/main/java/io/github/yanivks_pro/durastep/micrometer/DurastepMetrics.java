@@ -210,8 +210,8 @@ public final class DurastepMetrics implements EngineListener, AutoCloseable {
           .forEach(
               (queue, count) ->
                   rows.add(MultiGauge.Row.of(Tags.of("kind", "activity", "queue", queue), count)));
-      stats = latest;
       readyTasks.register(rows, true);
+      stats = latest;
     } catch (RuntimeException e) {
       log.debug("could not read Durastep's counts; the gauges keep their last values", e);
     }

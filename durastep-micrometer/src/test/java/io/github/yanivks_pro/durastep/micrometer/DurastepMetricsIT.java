@@ -79,6 +79,13 @@ class DurastepMetricsIT {
               () -> {
                 assertThat(registry.get("durastep.workflows.running").gauge().value()).isEqualTo(1);
                 assertThat(registry.get("durastep.workflows.blocked").gauge().value()).isEqualTo(1);
+                assertThat(
+                        registry
+                            .get("durastep.tasks.ready")
+                            .tags("kind", "decision", "queue", "default")
+                            .gauge()
+                            .value())
+                    .isEqualTo(1);
               });
       assertThat(
               registry.get("durastep.workflows.started").tag("type", "Greeter").counter().count())
@@ -100,13 +107,6 @@ class DurastepMetricsIT {
       assertThat(registry.get("durastep.decisions").tag("type", "Greeter").timer().count())
           .isGreaterThanOrEqualTo(2);
       assertThat(registry.get("durastep.timers.lateness").timer().count()).isEqualTo(1);
-      assertThat(
-              registry
-                  .get("durastep.tasks.ready")
-                  .tags("kind", "decision", "queue", "default")
-                  .gauge()
-                  .value())
-          .isEqualTo(1);
       assertThat(registry.get("durastep.tasks.oldest.age").gauge().value()).isNotNegative();
     }
   }
