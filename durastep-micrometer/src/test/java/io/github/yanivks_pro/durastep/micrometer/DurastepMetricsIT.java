@@ -69,9 +69,8 @@ class DurastepMetricsIT {
 
       assertThat(engine.client().start(Greeter.class, "greeter-1", "Ada").result(WAIT))
           .isEqualTo("hello Ada");
-      DurastepClient client = DurastepClient.connect(dataSource);
-      client.start(Greeter.class, "waiting-1", "Bob");
       engine.stop();
+      DurastepClient.connect(dataSource).start(Greeter.class, "waiting-1", "Bob");
       execute("UPDATE durastep.workflows SET blocked = true WHERE id = 'waiting-1'");
 
       await()
