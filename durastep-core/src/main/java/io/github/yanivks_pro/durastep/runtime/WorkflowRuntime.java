@@ -14,7 +14,6 @@ import io.github.yanivks_pro.durastep.runtime.Command.SetStatus;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicReference;
 
 public final class WorkflowRuntime {
 
@@ -37,55 +36,51 @@ public final class WorkflowRuntime {
       return List.of(new FailWorkflow(Failure.of(new WorkflowTimeoutException(workflowId))));
     }
     ReplayContext ctx = new ReplayContext(workflowId, replay, converter);
-    AtomicReference<Object> result = new AtomicReference<>();
-    AtomicReference<Throwable> thrown = new AtomicReference<>();
-
-    Thread thread =
-        Thread.ofVirtual()
-            .name("durastep-workflow-" + workflowId)
-            .start(
-                () -> {
-                  try {
-                    result.set(run(definition, ctx, replay));
-                  } catch (Throwable error) {
-                    thrown.set(error);
-                  }
-                });
-    joinUninterruptibly(thread);
+    ReplayContext.Outcome outcome = ctx.run(() -> run(definition, ctx, replay));
 
     if (ctx.nonDeterminism() != null) {
       throw ctx.nonDeterminism();
     }
-    if (ctx.suspended()) {
-      if (!ctx.isSuspension(thrown.get())) {
-        throw new WorkflowBlockedException(
-            workflowId, new IllegalStateException(CAUGHT_SUSPENSION, thrown.get()));
-      }
+    if (outcome.suspensionCaught()) {
+      throw new WorkflowBlockedException(
+          workflowId, new IllegalStateException(CAUGHT_SUSPENSION, outcome.thrownAfterCatch()));
+    }
+    if (!outcome.mainFinished()) {
       return withStatus(ctx, ctx.newCommands());
     }
-    if (thrown.get() instanceof ActivityFailedException
-        || thrown.get() instanceof WorkflowFailedException) {
-      return withStatus(ctx, List.of(new FailWorkflow(Failure.of(thrown.get()))));
+    Throwable thrown = outcome.thrown();
+    if (thrown instanceof ActivityFailedException || thrown instanceof WorkflowFailedException) {
+      return withStatus(ctx, List.of(new FailWorkflow(Failure.of(thrown))));
     }
-    if (thrown.get() instanceof CancelledException && ctx.cancellationDelivered()) {
+    if (thrown instanceof CancelledException && ctx.cancellationDelivered()) {
       return withStatus(ctx, List.of(new CancelWorkflow()));
     }
-    if (thrown.get() != null) {
-      throw new WorkflowBlockedException(workflowId, thrown.get());
+    if (thrown != null) {
+      throw new WorkflowBlockedException(workflowId, thrown);
     }
-    if (ctx.stepsReached() < replay.steps().size()) {
+    int stepsInHistory = replay.stepsOf(HistoryEvent.MAIN_BRANCH).size();
+    if (ctx.mainStepsReached() < stepsInHistory) {
       throw new NonDeterminismException(
           "workflow "
               + workflowId
               + " finished after "
-              + ctx.stepsReached()
+              + ctx.mainStepsReached()
               + " steps, but its history has "
-              + replay.steps().size());
+              + stepsInHistory);
+    }
+    Optional<String> unknownBranch = ctx.branchInHistoryNeverStarted();
+    if (unknownBranch.isPresent()) {
+      throw new NonDeterminismException(
+          "workflow "
+              + workflowId
+              + " finished without starting branch "
+              + unknownBranch.get()
+              + ", which its history has");
     }
     if (ctx.cancellationDelivered()) {
       return withStatus(ctx, List.of(new CancelWorkflow()));
     }
-    return withStatus(ctx, List.of(new CompleteWorkflow(converter.toPayload(result.get()))));
+    return withStatus(ctx, List.of(new CompleteWorkflow(converter.toPayload(outcome.result()))));
   }
 
   private static List<Command> withStatus(ReplayContext ctx, List<Command> commands) {
@@ -107,20 +102,5 @@ public final class WorkflowRuntime {
             .cast(converter.fromPayload(replay.started().input(), definition.inputType()));
     Workflow<I, O> workflow = definition.factory().get();
     return workflow.run(ctx, input);
-  }
-
-  private static void joinUninterruptibly(Thread thread) {
-    boolean interrupted = false;
-    while (true) {
-      try {
-        thread.join();
-        break;
-      } catch (InterruptedException e) {
-        interrupted = true;
-      }
-    }
-    if (interrupted) {
-      Thread.currentThread().interrupt();
-    }
   }
 }

@@ -42,6 +42,9 @@ class EventCodecTest {
         new ActivityFailed(2, failure, 3),
         new TimerStarted(Duration.ofDays(3)),
         new TimerFired(4),
+        new ActivityScheduled(
+            "Trips.bookHotel", new Payload("[\"trip-1\"]"), ActivityOptions.DEFAULT, "0.2.1"),
+        new TimerStarted(Duration.ofMinutes(5), null, "0.1"),
         new CancelRequested(),
         new WorkflowCancelled(),
         new TimerStarted(Duration.ofDays(3), "approval"),
@@ -125,5 +128,25 @@ class EventCodecTest {
     assertThatThrownBy(() -> codec.decode("TELEPORTED", "{}"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("TELEPORTED");
+  }
+
+  @Test
+  void stepsOfTheMainCodeAreStoredWithoutABranchSoOlderHistoriesReadTheSame() {
+    EventCodec codec = new EventCodec();
+    String olderPayload = "{\"activity\":\"Trips.bookFlight\",\"arguments\":[\"trip-1\"]}";
+
+    assertThat(
+            codec.payloadOf(
+                new ActivityScheduled(
+                    "Trips.bookFlight", new Payload("[\"trip-1\"]"), ActivityOptions.DEFAULT)))
+        .doesNotContain("branch");
+    assertThat(codec.payloadOf(new TimerStarted(Duration.ofMinutes(1)))).doesNotContain("branch");
+    assertThat(codec.decode(EventCodec.ACTIVITY_SCHEDULED, olderPayload))
+        .isEqualTo(
+            new ActivityScheduled(
+                "Trips.bookFlight",
+                new Payload("[\"trip-1\"]"),
+                ActivityOptions.DEFAULT,
+                HistoryEvent.MAIN_BRANCH));
   }
 }

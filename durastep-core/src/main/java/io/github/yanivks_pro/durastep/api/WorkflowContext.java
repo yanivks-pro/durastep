@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * The workflow's view of the engine, passed to {@link Workflow#run}.
@@ -85,6 +86,30 @@ public interface WorkflowContext {
    * @throws IllegalArgumentException if {@code status} is longer than that
    */
   void setStatus(String status);
+
+  /**
+   * Starts a branch: workflow code that runs alongside the code that started it, so that its
+   * activities run at the same time as others. Branches take turns on one logical thread; each runs
+   * until it waits for something, such as an activity, a timer or another branch.
+   *
+   * <p>Each branch has its own steps, its own {@link #now()} starting at the time it was started,
+   * and its own {@link #random()}. A cancellation reaches every branch at its next wait point. Only
+   * the main workflow code may wait for signals. When the main code finishes, the workflow ends,
+   * and branches that are still waiting are dropped.
+   *
+   * @param body the branch's code
+   * @param <T> the type of the branch's result
+   * @return a promise of the branch's result
+   */
+  <T> Promise<T> async(Supplier<T> body);
+
+  /**
+   * Starts a branch that has no result. See {@link #async(Supplier)}.
+   *
+   * @param body the branch's code
+   * @return a promise that is done when the branch has finished
+   */
+  Promise<Void> async(Runnable body);
 
   /**
    * Returns a new saga for undoing completed steps when a later one fails.

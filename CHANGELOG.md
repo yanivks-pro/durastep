@@ -18,6 +18,9 @@ All notable changes to Durastep are recorded here. The format follows
   `WorkflowCancelledException`. Running activities are not interrupted, but their results are ignored.
 - Sagas: `ctx.saga()` with `addCompensation(...)` after each step and `compensate()` to undo them in reverse
   order. Every undo step runs even if one fails, and the first failure is thrown at the end.
+- Parallel branches: `ctx.async(...)` returns a `Promise`; branches' activities run at the same time, while
+  their code takes turns on one logical thread and receives results in history order. Each branch numbers its
+  own steps, which are stored with the branch's ID.
 
 ## [0.3.0] - 2026-11-16
 

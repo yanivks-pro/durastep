@@ -6,16 +6,28 @@ import java.time.Duration;
 
 public sealed interface HistoryEvent {
 
+  String MAIN_BRANCH = "0";
+
   record WorkflowStarted(Payload input) implements HistoryEvent {}
 
-  record ActivityScheduled(String activity, Payload arguments, ActivityOptions options)
-      implements HistoryEvent {}
+  record ActivityScheduled(
+      String activity, Payload arguments, ActivityOptions options, String branch)
+      implements HistoryEvent {
+
+    public ActivityScheduled(String activity, Payload arguments, ActivityOptions options) {
+      this(activity, arguments, options, MAIN_BRANCH);
+    }
+  }
 
   record ActivityCompleted(int scheduledSeq, Payload result) implements HistoryEvent {}
 
   record ActivityFailed(int scheduledSeq, Failure failure, int attempts) implements HistoryEvent {}
 
-  record TimerStarted(Duration duration, String signal) implements HistoryEvent {
+  record TimerStarted(Duration duration, String signal, String branch) implements HistoryEvent {
+
+    public TimerStarted(Duration duration, String signal) {
+      this(duration, signal, MAIN_BRANCH);
+    }
 
     public TimerStarted(Duration duration) {
       this(duration, null);

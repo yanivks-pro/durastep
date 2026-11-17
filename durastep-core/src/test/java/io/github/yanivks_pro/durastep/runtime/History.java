@@ -38,6 +38,13 @@ final class History {
         new ActivityScheduled(activity, JSON.toArguments(arguments), ActivityOptions.DEFAULT));
   }
 
+  History scheduledIn(String branch, String activity, Object... arguments) {
+    return append(
+        next(),
+        new ActivityScheduled(
+            activity, JSON.toArguments(arguments), ActivityOptions.DEFAULT, branch));
+  }
+
   History completed(int scheduledSeq, Object result) {
     return append(next(), new ActivityCompleted(scheduledSeq, JSON.toPayload(result)));
   }

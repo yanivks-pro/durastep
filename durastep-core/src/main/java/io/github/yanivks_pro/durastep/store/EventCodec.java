@@ -63,10 +63,12 @@ final class EventCodec {
     return switch (event) {
       case WorkflowStarted started -> started.input().json();
       case ActivityScheduled scheduled ->
-          object()
-              .put("activity", scheduled.activity())
-              .set("arguments", tree(scheduled.arguments()))
-              .set("options", optionsTree(scheduled.options()))
+          withBranch(
+                  object()
+                      .put("activity", scheduled.activity())
+                      .set("arguments", tree(scheduled.arguments()))
+                      .set("options", optionsTree(scheduled.options())),
+                  scheduled.branch())
               .toString();
       case ActivityCompleted completed ->
           object()
@@ -84,7 +86,7 @@ final class EventCodec {
         if (started.signal() != null) {
           node.put("signal", started.signal());
         }
-        yield node.toString();
+        yield withBranch(node, started.branch()).toString();
       }
       case SignalReceived signal ->
           object().put("name", signal.name()).set("payload", tree(signal.payload())).toString();
@@ -104,7 +106,8 @@ final class EventCodec {
         yield new ActivityScheduled(
             node.required("activity").asString(),
             payload(node.required("arguments")),
-            node.has("options") ? options(node.get("options")) : ActivityOptions.DEFAULT);
+            node.has("options") ? options(node.get("options")) : ActivityOptions.DEFAULT,
+            branch(node));
       }
       case ACTIVITY_COMPLETED -> {
         JsonNode node = mapper.readTree(payloadJson);
@@ -122,7 +125,8 @@ final class EventCodec {
         JsonNode node = mapper.readTree(payloadJson);
         yield new TimerStarted(
             Duration.parse(node.required("duration").asString()),
-            node.has("signal") ? node.get("signal").asString() : null);
+            node.has("signal") ? node.get("signal").asString() : null,
+            branch(node));
       }
       case SIGNAL -> {
         JsonNode node = mapper.readTree(payloadJson);
@@ -209,6 +213,17 @@ final class EventCodec {
       builder.heartbeatTimeout(Duration.parse(node.get("heartbeatTimeout").asString()));
     }
     return builder.build();
+  }
+
+  private static ObjectNode withBranch(ObjectNode node, String branch) {
+    if (!branch.equals(HistoryEvent.MAIN_BRANCH)) {
+      node.put("branch", branch);
+    }
+    return node;
+  }
+
+  private static String branch(JsonNode node) {
+    return node.has("branch") ? node.get("branch").asString() : HistoryEvent.MAIN_BRANCH;
   }
 
   private ObjectNode object() {
