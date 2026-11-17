@@ -32,6 +32,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -568,6 +571,67 @@ class JdbcWorkflowStoreIT {
   }
 
   @Test
+  void aCancelWhileADecisionIsBeingSavedWaitsForItInsteadOfDeadlocking() throws Exception {
+    store.start("order-c1", "OrderWorkflow", ORDER);
+    CompletableFuture<Boolean> cancelled;
+    try (Connection decider = dataSource.getConnection();
+        Statement statement = decider.createStatement()) {
+      decider.setAutoCommit(false);
+      statement.execute("SELECT id FROM durastep.tasks WHERE workflow_id = 'order-c1' FOR UPDATE");
+      cancelled = inTheBackground(() -> store.cancel("order-c1"));
+      await().atMost(Duration.ofSeconds(10)).until(JdbcWorkflowStoreIT::someoneWaitsForALock);
+      statement.execute(
+          "UPDATE durastep.workflows SET status = 'saving a decision' WHERE id = 'order-c1'");
+      decider.commit();
+    }
+
+    assertThat(cancelled.get(10, TimeUnit.SECONDS)).isTrue();
+    assertThat(count("workflows WHERE cancel_requested")).isEqualTo(1);
+  }
+
+  @Test
+  void aCancelForAWorkflowThatFinishesMeanwhileDoesNothingAndLeavesNothingBehind()
+      throws Exception {
+    store.start("order-c2", "OrderWorkflow", ORDER);
+    CompletableFuture<Boolean> cancelled;
+    try (Connection decider = dataSource.getConnection();
+        Statement statement = decider.createStatement()) {
+      decider.setAutoCommit(false);
+      statement.execute("SELECT id FROM durastep.tasks WHERE workflow_id = 'order-c2' FOR UPDATE");
+      cancelled = inTheBackground(() -> store.cancel("order-c2"));
+      await().atMost(Duration.ofSeconds(10)).until(JdbcWorkflowStoreIT::someoneWaitsForALock);
+      finish(statement, "order-c2");
+      decider.commit();
+    }
+
+    assertThat(cancelled.get(10, TimeUnit.SECONDS)).isFalse();
+    assertThat(count("tasks WHERE workflow_id = 'order-c2'")).isZero();
+    assertThat(count("inbox WHERE workflow_id = 'order-c2'")).isZero();
+  }
+
+  @Test
+  void aSignalForAWorkflowThatFinishesMeanwhileIsRejectedAndLeavesNothingBehind() throws Exception {
+    store.start("order-c3", "OrderWorkflow", ORDER);
+    CompletableFuture<Boolean> signalled;
+    try (Connection decider = dataSource.getConnection();
+        Statement statement = decider.createStatement()) {
+      decider.setAutoCommit(false);
+      statement.execute("SELECT id FROM durastep.tasks WHERE workflow_id = 'order-c3' FOR UPDATE");
+      signalled =
+          inTheBackground(
+              () -> store.signal("order-c3", "approve", new Payload("true"), "request-1"));
+      await().atMost(Duration.ofSeconds(10)).until(JdbcWorkflowStoreIT::someoneWaitsForALock);
+      finish(statement, "order-c3");
+      decider.commit();
+    }
+
+    assertThatThrownBy(() -> signalled.get(10, TimeUnit.SECONDS))
+        .hasCauseInstanceOf(IllegalStateException.class);
+    assertThat(count("tasks WHERE workflow_id = 'order-c3'")).isZero();
+    assertThat(count("inbox WHERE workflow_id = 'order-c3'")).isZero();
+  }
+
+  @Test
   void aCancelledWorkflowIsClosedAndCannotBeCancelledAgain() throws SQLException {
     store.start("order-d", "OrderWorkflow", ORDER);
     ClaimedTask decide = claim(TaskKind.WORKFLOW);
@@ -620,6 +684,40 @@ class JdbcWorkflowStoreIT {
       }
     }
     return types;
+  }
+
+  private static <T> CompletableFuture<T> inTheBackground(Supplier<T> work) {
+    CompletableFuture<T> future = new CompletableFuture<>();
+    Thread.ofVirtual()
+        .start(
+            () -> {
+              try {
+                future.complete(work.get());
+              } catch (RuntimeException e) {
+                future.completeExceptionally(e);
+              }
+            });
+    return future;
+  }
+
+  private static boolean someoneWaitsForALock() throws SQLException {
+    try (Connection connection = dataSource.getConnection();
+        Statement statement = connection.createStatement();
+        ResultSet row =
+            statement.executeQuery(
+                "SELECT count(*) FROM pg_stat_activity"
+                    + " WHERE wait_event_type = 'Lock' AND datname = current_database()")) {
+      row.next();
+      return row.getInt(1) > 0;
+    }
+  }
+
+  private static void finish(Statement decider, String workflowId) throws SQLException {
+    decider.execute(
+        "UPDATE durastep.workflows SET state = 'COMPLETED', closed_at = now() WHERE id = '"
+            + workflowId
+            + "'");
+    decider.execute("DELETE FROM durastep.tasks WHERE workflow_id = '" + workflowId + "'");
   }
 
   private static int count(String tableAndCondition) throws SQLException {

@@ -23,6 +23,9 @@ A workflow has at most one decision task, and that task is processed by one work
 - Each engine has a fixed number of decision slots and activity slots (`workflowConcurrency`, default 10;
   `activityConcurrency`, default 100). A poller claims at most as many tasks as it has free slots, in one
   batch, and runs each on its own virtual thread. A full engine leaves work for others.
+- Every transaction that touches both takes the same order of locks: first the workflow's decision task, then
+  the workflow row. Signals and cancellations wake the decider before they read or change the workflow, so they
+  wait for a decision being saved instead of deadlocking with it, and see whether it finished the workflow.
 
 ## Alternatives considered
 

@@ -591,6 +591,7 @@ public final class JdbcWorkflowStore {
     return transactions.inTransaction(
         "cancel workflow " + workflowId,
         connection -> {
+          wakeDecider(connection, workflowId);
           int requested =
               update(
                   connection,
@@ -600,6 +601,7 @@ public final class JdbcWorkflowStore {
                       + " WHERE id = ? AND state = 'RUNNING' AND NOT cancel_requested",
                   workflowId);
           if (requested == 0) {
+            connection.rollback();
             return false;
           }
           CancelRequested request = new CancelRequested();
@@ -613,14 +615,6 @@ public final class JdbcWorkflowStore {
               codec.typeOf(request),
               codec.payloadOf(request),
               "cancel");
-          update(
-              connection,
-              "INSERT INTO "
-                  + tasks
-                  + " (workflow_id, kind) VALUES (?, 'WORKFLOW')"
-                  + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
-                  + " DO UPDATE SET needs_rerun = true",
-              workflowId);
           notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
           return true;
         });
@@ -630,6 +624,7 @@ public final class JdbcWorkflowStore {
     return transactions.inTransaction(
         "signal workflow " + workflowId,
         connection -> {
+          wakeDecider(connection, workflowId);
           WorkflowState state = stateOf(connection, workflowId);
           if (state != WorkflowState.RUNNING) {
             throw new IllegalStateException(
@@ -650,19 +645,23 @@ public final class JdbcWorkflowStore {
                   codec.payloadOf(signal),
                   "signal-" + requestId);
           if (accepted == 0) {
+            connection.rollback();
             return false;
           }
-          update(
-              connection,
-              "INSERT INTO "
-                  + tasks
-                  + " (workflow_id, kind) VALUES (?, 'WORKFLOW')"
-                  + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
-                  + " DO UPDATE SET needs_rerun = true",
-              workflowId);
           notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
           return true;
         });
+  }
+
+  private void wakeDecider(Connection connection, String workflowId) throws SQLException {
+    update(
+        connection,
+        "INSERT INTO "
+            + tasks
+            + " (workflow_id, kind) VALUES (?, 'WORKFLOW')"
+            + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
+            + " DO UPDATE SET needs_rerun = true",
+        workflowId);
   }
 
   public Optional<StoredWorkflow> find(String workflowId) {
