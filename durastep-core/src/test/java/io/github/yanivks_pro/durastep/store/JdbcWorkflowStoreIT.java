@@ -632,6 +632,95 @@ class JdbcWorkflowStoreIT {
   }
 
   @Test
+  void terminateRecordsWhoAndWhyClosesTheWorkflowAndRemovesItsWork() throws SQLException {
+    store.start("order-t1", "OrderWorkflow", ORDER);
+
+    assertThat(store.terminate("order-t1", "alice", "customer fraud")).isTrue();
+
+    StoredWorkflow workflow = store.find("order-t1").orElseThrow();
+    assertThat(workflow.state()).isEqualTo(WorkflowState.CANCELLED);
+    assertThat(workflow.failure().message()).isEqualTo("terminated by alice: customer fraud");
+    assertThat(eventTypes("order-t1"))
+        .containsExactly("WORKFLOW_STARTED", "OPERATOR_ACTION", "WORKFLOW_CANCELLED");
+    assertThat(count("tasks WHERE workflow_id = 'order-t1'")).isZero();
+    assertThat(count("workflows WHERE id = 'order-t1' AND history_length = 3")).isEqualTo(1);
+    assertThat(store.terminate("order-t1", "alice", "again")).isFalse();
+  }
+
+  @Test
+  void aDeciderThatWasMidStepWhenTheWorkflowWasTerminatedCannotSaveItsDecision()
+      throws SQLException {
+    store.start("order-t2", "OrderWorkflow", ORDER);
+    ClaimedTask decide = claim(TaskKind.WORKFLOW);
+    DecisionInput input = store.loadDecision(decide);
+
+    store.terminate("order-t2", "alice", "stop it");
+
+    assertThatThrownBy(
+            () ->
+                store.commitDecision(
+                    decide, input, List.of(new CompleteWorkflow(new Payload("\"done\"")))))
+        .isInstanceOf(StaleTaskException.class);
+    assertThat(eventTypes("order-t2"))
+        .containsExactly("WORKFLOW_STARTED", "OPERATOR_ACTION", "WORKFLOW_CANCELLED");
+  }
+
+  @Test
+  void retryNowFencesOutADeciderThatWasMidStepAndTheNextDecisionSeesTheAuditEvent()
+      throws SQLException {
+    store.start("order-t3", "OrderWorkflow", ORDER);
+    store.blockDecision(
+        claim(TaskKind.WORKFLOW), new IllegalStateException("a bug"), Duration.ZERO);
+    ClaimedTask midStep = claim(TaskKind.WORKFLOW);
+    DecisionInput staleInput = store.loadDecision(midStep);
+
+    assertThat(store.retryNow("order-t3", "bob", "fix deployed")).isTrue();
+
+    assertThatThrownBy(
+            () ->
+                store.commitDecision(
+                    midStep, staleInput, List.of(new CompleteWorkflow(new Payload("1")))))
+        .isInstanceOf(StaleTaskException.class);
+    ClaimedTask next = claim(TaskKind.WORKFLOW);
+    DecisionInput input = store.loadDecision(next);
+    assertThat(input.history()).extracting(HistoryEntry::event).hasSize(2);
+    store.commitDecision(next, input, List.of(new CompleteWorkflow(new Payload("1"))));
+    assertThat(eventTypes("order-t3"))
+        .containsExactly("WORKFLOW_STARTED", "OPERATOR_ACTION", "WORKFLOW_COMPLETED");
+    assertThat(store.find("order-t3").orElseThrow().blocked()).isFalse();
+  }
+
+  @Test
+  void retryNowLeavesAWorkflowThatIsNotBlockedAlone() throws SQLException {
+    store.start("order-t4", "OrderWorkflow", ORDER);
+
+    assertThat(store.retryNow("order-t4", "bob", "just in case")).isFalse();
+    assertThat(eventTypes("order-t4")).containsExactly("WORKFLOW_STARTED");
+  }
+
+  @Test
+  void aRerunStartsALinkedCopyOfAFinishedWorkflowWithTheNextFreeNumber() throws SQLException {
+    store.start("order-t5", "OrderWorkflow", ORDER);
+    ClaimedTask decide = claim(TaskKind.WORKFLOW);
+    store.commitDecision(
+        decide, store.loadDecision(decide), List.of(new CompleteWorkflow(new Payload("1"))));
+
+    String first = store.rerun("order-t5", "carol", "reprocess");
+    String second = store.rerun("order-t5", "carol", "once more");
+
+    assertThat(first).isEqualTo("order-t5-rerun-1");
+    assertThat(second).isEqualTo("order-t5-rerun-2");
+    assertThat(eventTypes(first)).containsExactly("WORKFLOW_STARTED", "OPERATOR_ACTION");
+    assertThat(count("workflows WHERE rerun_of = 'order-t5' AND state = 'RUNNING'")).isEqualTo(2);
+    assertThat(count("workflows WHERE id = 'order-t5-rerun-1' AND input = '" + ORDER.json() + "'"))
+        .isEqualTo(1);
+    assertThat(eventTypes("order-t5")).containsExactly("WORKFLOW_STARTED", "WORKFLOW_COMPLETED");
+    assertThatThrownBy(() -> store.rerun(first, "carol", "too early"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("still running");
+  }
+
+  @Test
   void aCancelledWorkflowIsClosedAndCannotBeCancelledAgain() throws SQLException {
     store.start("order-d", "OrderWorkflow", ORDER);
     ClaimedTask decide = claim(TaskKind.WORKFLOW);

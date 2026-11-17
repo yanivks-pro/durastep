@@ -77,4 +77,27 @@ public interface WorkflowHandle<O> {
    *     finished or been asked to cancel
    */
   boolean cancel();
+
+  /**
+   * Retries a blocked workflow now instead of after its backoff, for example once a fix is
+   * deployed. The action is recorded in the workflow's history with who did it and why.
+   *
+   * @param reason why, for the audit trail
+   * @return {@code true} if the workflow was blocked and will be retried now, {@code false} if it
+   *     was not blocked or has finished
+   * @throws IllegalArgumentException if the reason is blank
+   */
+  boolean retryNow(String reason);
+
+  /**
+   * Stops this workflow at once, without letting it clean up, and ends it as {@link
+   * WorkflowState#CANCELLED}. Use it for workflows that cannot or must not continue, such as a
+   * blocked one; {@link #cancel()} lets a workflow clean up instead. The action is recorded in the
+   * workflow's history with who did it and why.
+   *
+   * @param reason why, for the audit trail
+   * @return {@code true} if the workflow was terminated, {@code false} if it had already finished
+   * @throws IllegalArgumentException if the reason is blank
+   */
+  boolean terminate(String reason);
 }

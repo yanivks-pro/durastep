@@ -19,6 +19,7 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.CancelRequested;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.OperatorAction;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
@@ -51,6 +52,8 @@ public final class JdbcWorkflowStore {
   private static final String SELECT_WORKFLOW =
       "SELECT id, type, state, result::text AS result, failure::text AS failure, status, blocked,"
           + " created_at, closed_at";
+
+  public static final int MAX_WORKFLOW_ID_LENGTH = 255;
 
   public static final String DEFAULT_QUEUE = "default";
 
@@ -667,6 +670,186 @@ public final class JdbcWorkflowStore {
             + " ON CONFLICT (workflow_id) WHERE kind = 'WORKFLOW'"
             + " DO UPDATE SET needs_rerun = true",
         workflowId);
+  }
+
+  public static final String TERMINATED = "terminated";
+
+  public boolean terminate(String workflowId, String by, String reason) {
+    return transactions.inTransaction(
+        "terminate workflow " + workflowId,
+        connection -> {
+          lockDecisionTask(connection, workflowId);
+          Optional<LockedWorkflow> workflow = lockWorkflow(connection, workflowId);
+          if (workflow.isEmpty() || workflow.get().state() != WorkflowState.RUNNING) {
+            connection.rollback();
+            return false;
+          }
+          int seq = workflow.get().historyLength();
+          appendEvent(
+              connection, workflowId, ++seq, new OperatorAction("terminate", by, reason), null);
+          appendEvent(connection, workflowId, ++seq, new WorkflowCancelled(), null);
+          update(
+              connection,
+              "UPDATE "
+                  + workflows
+                  + " SET state = 'CANCELLED', blocked = false, blocked_error = NULL,"
+                  + " failure = CAST(? AS jsonb), history_length = ?, closed_at = now(),"
+                  + " updated_at = now() WHERE id = ?",
+              codec.failureJson(new Failure(TERMINATED, "terminated by " + by + ": " + reason)),
+              seq,
+              workflowId);
+          update(connection, "DELETE FROM " + tasks + " WHERE workflow_id = ?", workflowId);
+          update(connection, "DELETE FROM " + inbox + " WHERE workflow_id = ?", workflowId);
+          update(connection, "DELETE FROM " + timers + " WHERE workflow_id = ?", workflowId);
+          return true;
+        });
+  }
+
+  public boolean retryNow(String workflowId, String by, String reason) {
+    return transactions.inTransaction(
+        "retry workflow " + workflowId,
+        connection -> {
+          Optional<Long> task = lockDecisionTask(connection, workflowId);
+          Optional<LockedWorkflow> workflow = lockWorkflow(connection, workflowId);
+          if (task.isEmpty()
+              || workflow.isEmpty()
+              || workflow.get().state() != WorkflowState.RUNNING
+              || !workflow.get().blocked()) {
+            connection.rollback();
+            return false;
+          }
+          int seq = workflow.get().historyLength() + 1;
+          appendEvent(
+              connection, workflowId, seq, new OperatorAction("retry-now", by, reason), null);
+          update(
+              connection,
+              "UPDATE " + workflows + " SET history_length = ?, updated_at = now() WHERE id = ?",
+              seq,
+              workflowId);
+          update(
+              connection,
+              "UPDATE "
+                  + tasks
+                  + " SET fencing_token = fencing_token + 1, lease_owner = NULL, lease_until = NULL,"
+                  + " attempt = 1, needs_rerun = false, visible_at = now() WHERE id = ?",
+              task.get());
+          notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
+          return true;
+        });
+  }
+
+  public List<String> blockedWorkflows() {
+    return transactions.inTransaction(
+        "find blocked workflows",
+        connection -> {
+          List<String> ids = new ArrayList<>();
+          try (PreparedStatement statement =
+                  connection.prepareStatement(
+                      "SELECT id FROM " + workflows + " WHERE blocked ORDER BY created_at, id");
+              ResultSet row = statement.executeQuery()) {
+            while (row.next()) {
+              ids.add(row.getString(1));
+            }
+          }
+          return ids;
+        });
+  }
+
+  public String rerun(String workflowId, String by, String reason) {
+    return transactions.inTransaction(
+        "rerun workflow " + workflowId,
+        connection -> {
+          String type;
+          WorkflowState state;
+          String input;
+          try (PreparedStatement statement =
+              connection.prepareStatement(
+                  "SELECT type, state, input::text FROM " + workflows + " WHERE id = ?")) {
+            statement.setString(1, workflowId);
+            try (ResultSet row = statement.executeQuery()) {
+              if (!row.next()) {
+                throw new IllegalArgumentException("no workflow " + workflowId + " exists");
+              }
+              type = row.getString(1);
+              state = WorkflowState.valueOf(row.getString(2));
+              input = row.getString(3);
+            }
+          }
+          if (state == WorkflowState.RUNNING) {
+            throw new IllegalStateException(
+                "workflow "
+                    + workflowId
+                    + " is still running; only finished workflows can be rerun");
+          }
+          for (int number = 1; ; number++) {
+            String rerunId = workflowId + "-rerun-" + number;
+            if (rerunId.length() > MAX_WORKFLOW_ID_LENGTH) {
+              throw new IllegalStateException(
+                  "the rerun ID " + rerunId + " would be longer than " + MAX_WORKFLOW_ID_LENGTH);
+            }
+            int inserted =
+                update(
+                    connection,
+                    "INSERT INTO "
+                        + workflows
+                        + " (id, type, state, input, history_length, rerun_of)"
+                        + " VALUES (?, ?, 'RUNNING', CAST(? AS jsonb), 2, ?)"
+                        + " ON CONFLICT (id) DO NOTHING",
+                    rerunId,
+                    type,
+                    input,
+                    workflowId);
+            if (inserted == 1) {
+              appendEvent(connection, rerunId, 1, new WorkflowStarted(new Payload(input)), null);
+              appendEvent(
+                  connection,
+                  rerunId,
+                  2,
+                  new OperatorAction("rerun of " + workflowId, by, reason),
+                  null);
+              update(
+                  connection,
+                  "INSERT INTO " + tasks + " (workflow_id, kind) VALUES (?, 'WORKFLOW')",
+                  rerunId);
+              notifyWork(connection, TaskKind.WORKFLOW, DEFAULT_QUEUE);
+              return rerunId;
+            }
+          }
+        });
+  }
+
+  private record LockedWorkflow(WorkflowState state, boolean blocked, int historyLength) {}
+
+  private Optional<Long> lockDecisionTask(Connection connection, String workflowId)
+      throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement(
+            "SELECT id FROM "
+                + tasks
+                + " WHERE workflow_id = ? AND kind = 'WORKFLOW' FOR UPDATE")) {
+      statement.setString(1, workflowId);
+      try (ResultSet row = statement.executeQuery()) {
+        return row.next() ? Optional.of(row.getLong(1)) : Optional.empty();
+      }
+    }
+  }
+
+  private Optional<LockedWorkflow> lockWorkflow(Connection connection, String workflowId)
+      throws SQLException {
+    try (PreparedStatement statement =
+        connection.prepareStatement(
+            "SELECT state, blocked, history_length FROM "
+                + workflows
+                + " WHERE id = ? FOR UPDATE")) {
+      statement.setString(1, workflowId);
+      try (ResultSet row = statement.executeQuery()) {
+        return row.next()
+            ? Optional.of(
+                new LockedWorkflow(
+                    WorkflowState.valueOf(row.getString(1)), row.getBoolean(2), row.getInt(3)))
+            : Optional.empty();
+      }
+    }
   }
 
   public Optional<StoredWorkflow> find(String workflowId) {

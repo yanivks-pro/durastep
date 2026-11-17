@@ -12,6 +12,7 @@ import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityCompleted;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityFailed;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.ActivityScheduled;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.CancelRequested;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.OperatorAction;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
 import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
@@ -46,6 +47,7 @@ class EventCodecTest {
             "Trips.bookHotel", new Payload("[\"trip-1\"]"), ActivityOptions.DEFAULT, "0.2.1"),
         new TimerStarted(Duration.ofMinutes(5), null, "0.1"),
         new CancelRequested(),
+        new OperatorAction("terminate", "alice", "customer fraud"),
         new WorkflowCancelled(),
         new TimerStarted(Duration.ofDays(3), "approval"),
         new SignalReceived("approval", new Payload("{\"by\":\"ana\"}")),

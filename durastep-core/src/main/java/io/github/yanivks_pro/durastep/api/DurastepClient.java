@@ -124,6 +124,39 @@ public interface DurastepClient {
   List<WorkflowDescription> list(WorkflowQuery query);
 
   /**
+   * Retries every blocked workflow now. See {@link WorkflowHandle#retryNow(String)}.
+   *
+   * @param reason why, for the audit trail of each workflow
+   * @return how many workflows will be retried
+   * @throws IllegalArgumentException if the reason is blank
+   */
+  int retryAllBlocked(String reason);
+
+  /**
+   * Starts a new workflow with the same type and input as a finished one, for example to process an
+   * order again after fixing data. The new workflow's ID is the original's with {@code -rerun-1},
+   * {@code -rerun-2} and so on appended; it is linked to the original, which stays as it is, and
+   * its history records who started it and why. The original's deadline is not copied.
+   *
+   * @param workflowId the finished workflow to run again
+   * @param reason why, for the audit trail
+   * @return the ID of the new workflow
+   * @throws IllegalArgumentException if no such workflow exists or the reason is blank
+   * @throws IllegalStateException if the workflow is still running
+   */
+  String rerun(String workflowId, String reason);
+
+  /**
+   * Returns a client that records the given name as the operator in the audit trail of {@link
+   * WorkflowHandle#retryNow}, {@link WorkflowHandle#terminate}, {@link #retryAllBlocked} and {@link
+   * #rerun}. By default the name is that of the operating system user.
+   *
+   * @param operator who is acting, such as a user name
+   * @return a client acting as that operator
+   */
+  DurastepClient actingAs(String operator);
+
+  /**
    * Returns a handle to an existing workflow.
    *
    * @param workflowId the workflow's business ID
