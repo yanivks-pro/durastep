@@ -8,10 +8,10 @@ as intended.
 [![CI](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml/badge.svg)](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-> **v0.5: ready to operate.** A CLI to find and fix workflows, metrics with a Grafana dashboard, operator
-> commands with an audit trail, and a Spring Boot starter, on top of workflows that wait for people, run steps in
-> parallel and survive chaos: in a test that kills engines at random, nothing is lost and nothing is done twice.
-> It is not ready for production yet: see [Limits of v0.5](#limits-of-v05) and the [roadmap](#roadmap).
+> **v0.6: safe to change.** Deploy new workflow code while workflows are running, check it against saved
+> histories in CI first, and encrypt workflow data before it reaches the database. All on top of an engine you can
+> operate and that survives chaos: in a test that kills engines at random, nothing is lost and nothing is done
+> twice. It is not ready for production yet: see [Limits of v0.6](#limits-of-v06) and the [roadmap](#roadmap).
 
 ```java
 public final class OrderWorkflow implements Workflow<Order, Receipt> {
@@ -51,10 +51,14 @@ Focused tests prove each guarantee on its own, on every commit:
 - A worker frozen with `kill -STOP` loses its task; when it wakes up, its result is rejected by the fencing
   check.
 - A ten-second database outage in the middle of a load loses nothing and repeats nothing.
-- Parallel branches replay identically: 300 random orders of results, each replayed from every decision point,
-  give exactly the decisions that were recorded.
+- Replay is checked with property tests: hundreds of random mixes of results, timers, signals, cancellations and
+  crashed decisions must end correctly and replay every decision identically; a failing case shrinks to the
+  smallest one.
 - A process killed with `kill -9` while a saga undoes a trip is replaced, and every booking is undone exactly
   once.
+- New code is deployed while a workflow is sending an email: that workflow finishes by email, and newer ones
+  send an SMS.
+- A card number and a PIN pass through an encrypted workflow, and appear in neither the database nor the logs.
 
 These run in CI on every commit, against Postgres 16 and the latest Postgres.
 
@@ -163,7 +167,7 @@ client.cancel("trip-9");
 ```
 
 Durastep is not on Maven Central yet. Build it with `./mvnw install` and depend on
-`io.github.yanivks-pro:durastep-core:0.5.0`, or on `durastep-spring-boot-starter` in a Spring Boot application.
+`io.github.yanivks-pro:durastep-core:0.6.0`, or on `durastep-spring-boot-starter` in a Spring Boot application.
 The engine creates its tables in a `durastep` schema on start.
 
 ## Try the examples
@@ -231,7 +235,38 @@ class ShopActivities implements Payments, Warehouse { … }      // registered f
 The engine uses the application's `DataSource`, stops during Spring's graceful shutdown, reports to
 `/actuator/health`, and records its metrics when a `MeterRegistry` is present.
 
-## Features in v0.5
+## Change it safely
+
+Running workflows replay their history against the new code after every deploy, so changing their steps needs
+care. Keep the old path for workflows that already went past a change:
+
+```java
+if (ctx.version("send-sms-instead-of-email", 1) >= 1) {
+  shop.sms(order);          // workflows that reach this point from now on
+} else {
+  shop.email(order);        // workflows that already went past it
+}
+```
+
+Then prove it before the deploy: save a few real histories with `durastep history <id> --json` and replay them
+against the new code in a unit test with the [testkit](durastep-testkit/README.md):
+
+```java
+WorkflowReplayer.of(OrderWorkflow.class, OrderWorkflow::new)
+    .replay(Path.of("src/test/resources/histories"));   // fails, naming each history the change would break
+```
+
+Encrypt workflow data before it reaches the database, with keys you control and can rotate:
+
+```java
+DurastepEngine.builder()
+    .payloadCodec(AesGcmPayloadCodec.withKeys(Map.of("2026-11", key), "2026-11"))
+```
+
+The [security guide](docs/security.md) covers the rest: a database user with the exact privileges Durastep needs,
+TLS, keys and rotation, logs and retention.
+
+## Features in v0.6
 
 - **Workflows as plain Java**, with activities declared as ordinary interfaces.
 - **Durable history and replay:** finished steps return their saved result and are never run again.
@@ -291,13 +326,22 @@ The engine uses the application's `DataSource`, stops during Spring's graceful s
   runnable JAR or a Docker image.
 - **Spring Boot starter:** annotations, `durastep.*` properties, graceful shutdown, health, metrics and a
   client-only mode.
+- **Versioning:** `ctx.version(changeId, maxVersion)` keeps the old code path for workflows that already went
+  past a change; the choice is recorded in the history and does not shift step numbers.
+- **Testkit:** `WorkflowReplayer` replays saved histories against new code in a unit test, and a finished
+  workflow must still end the same way.
+- **Payload encryption:** `PayloadCodec` and `AesGcmPayloadCodec` encrypt inputs, arguments, results and
+  signals, with key rotation; engines, clients, the testkit and the starter take the codec, and the CLI shows
+  `[encrypted]`.
+- **Security guide:** a tested database setup for a least-privilege user, and a test that keeps workflow data
+  out of the logs.
 
-## Limits of v0.5
+## Limits of v0.6
 
 - **Only the main workflow code can wait for signals**, not code in parallel branches.
 - **No Maven Central release and no published CLI image yet**: build the JARs and the image from source.
-- **No workflow versioning yet** (M6): changing the steps of a workflow while instances of it are running makes
-  them blocked with a mismatch.
+- **Replay compares which steps run and in what order, not their arguments**, both in the engine and in the
+  testkit.
 - **Notifications do not pass through PgBouncer in transaction mode**; behind it, engines fall back to polling
   once a second.
 
@@ -347,6 +391,11 @@ Every significant decision is recorded as an [Architecture Decision Record](docs
   [ADR-0024](docs/adr/0024-retention-and-size-limits.md)
 - **A Spring Boot starter in its own module.** Spring's dependency versions stay out of the core and the other
   modules. [ADR-0025](docs/adr/0025-spring-boot-starter-module.md)
+- **Versioning with markers in the history.** A version check records its answer without becoming a step, so
+  adding one never shifts the steps of a running workflow. [ADR-0026](docs/adr/0026-versioning-markers.md)
+- **Pluggable payload encryption.** Data is encrypted in the application, with the key named in each envelope
+  and authenticated; names and errors stay readable so tools keep working.
+  [ADR-0027](docs/adr/0027-pluggable-payload-encryption.md)
 - **The database guards the rules.** Constraints reject invalid states, such as a second decision task for the
   same workflow or a finished workflow without a finish time. [ADR-0007](docs/adr/0007-schema-migrations-with-flyway.md)
 
@@ -369,6 +418,7 @@ runs the chaos test, which takes a few minutes.
 | Module | What it is |
 |---|---|
 | `durastep-core` | The engine, plain Java |
+| `durastep-testkit` | `WorkflowReplayer` for testing new code against saved histories |
 | `durastep-micrometer` | Micrometer metrics |
 | `durastep-cli` | The command-line tool |
 | `durastep-spring-boot-starter` | Spring Boot 4 integration |
@@ -384,8 +434,8 @@ runs the chaos test, which takes a few minutes.
 | M3 Distributed (v0.3) | Many instances, leases and fencing; chaos test with 0 lost and 0 duplicates | ✅ Done |
 | M4 Interaction (v0.4) | Signals, cancellation, sagas, parallel steps and runnable examples | ✅ Done |
 | M5 Operability (v0.5) | CLI, metrics and Grafana, operator commands, retention, Spring Boot starter | ✅ Done |
-| M6 Safe evolution (v0.6) | Versioning, replay testing of new code, payload encryption | 🚧 Next |
-| M7 Showcase (v1.0) | Dashboard, tracing, benchmarks, complete documentation | ⏳ Planned |
+| M6 Safe evolution (v0.6) | Versioning, replay testing of new code, property tests, payload encryption | ✅ Done |
+| M7 Showcase (v1.0) | Dashboard, tracing, benchmarks, complete documentation | 🚧 Next |
 
 ## Non-goals
 
