@@ -56,6 +56,7 @@
     <archunit.version>1.5.1</archunit.version>
     <testcontainers.version>2.0.5</testcontainers.version>
     <awaitility.version>4.3.0</awaitility.version>
+    <jqwik.version>1.10.2</jqwik.version>
 
     <errorprone.version>2.51.0</errorprone.version>
     <google-java-format.version>1.36.1</google-java-format.version>
@@ -175,6 +176,11 @@
         <groupId>org.awaitility</groupId>
         <artifactId>awaitility</artifactId>
         <version>${awaitility.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>net.jqwik</groupId>
+        <artifactId>jqwik</artifactId>
+        <version>${jqwik.version}</version>
       </dependency>
       <dependency>
         <groupId>com.tngtech.archunit</groupId>
