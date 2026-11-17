@@ -20,6 +20,9 @@ All notable changes to Durastep are recorded here. The format follows
 - Size limits: workflow data larger than 256 KB as JSON throws `PayloadTooLargeException`, with a tip to pass a
   reference instead (`maxPayloadSize` on the builder). A workflow logs one warning when its history reaches
   10,000 events and is blocked at 50,000 (`historyLimits`), so an operator can terminate or rerun it.
+- Retention: finished workflows are deleted 30 days after they closed (`retention` on the builder), with their
+  history, in small batches and by one engine at a time. Running workflows are never deleted, and
+  `noRetention()` keeps everything.
 
 ### Fixed
 
