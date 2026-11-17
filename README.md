@@ -8,9 +8,9 @@ as intended.
 [![CI](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml/badge.svg)](https://github.com/yanivks-pro/durastep/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-> **v0.3: runs on many instances and survives chaos.** In a test that kills engines at random, nothing is lost and
-> nothing is done twice. It is not ready for production yet: see [Limits of v0.3](#limits-of-v03) and the
-> [roadmap](#roadmap).
+> **v0.4: workflows that wait for people, run steps in parallel and undo their work.** They survive chaos too: in
+> a test that kills engines at random, nothing is lost and nothing is done twice. It is not ready for production
+> yet: see [Limits of v0.4](#limits-of-v04) and the [roadmap](#roadmap).
 
 ```java
 public final class OrderWorkflow implements Workflow<Order, Receipt> {
@@ -50,6 +50,10 @@ Focused tests prove each guarantee on its own, on every commit:
 - A worker frozen with `kill -STOP` loses its task; when it wakes up, its result is rejected by the fencing
   check.
 - A ten-second database outage in the middle of a load loses nothing and repeats nothing.
+- Parallel branches replay identically: 300 random orders of results, each replayed from every decision point,
+  give exactly the decisions that were recorded.
+- A process killed with `kill -9` while a saga undoes a trip is replaced, and every booking is undone exactly
+  once.
 
 These run in CI on every commit, against Postgres 16 and the latest Postgres.
 
@@ -129,10 +133,57 @@ public String chargeCard(String orderId, long cents) {
 }
 ```
 
-Durastep is not on Maven Central yet. Build it with `./mvnw install` and depend on
-`io.github.yanivks-pro:durastep-core:0.3.0`. The engine creates its tables in a `durastep` schema on start.
+Wait for people with signals, and tell them where things stand with a status:
 
-## Features in v0.3
+```java
+ctx.setStatus("waiting for the manager");
+Optional<Decision> decision = ctx.awaitSignal("decision", Decision.class, Duration.ofDays(2));
+
+client.signal("expense-7", "decision", new Decision(true, "Grace", "fine"));
+client.handle("expense-7", ExpenseWorkflow.class).describe().status();
+```
+
+Run steps in parallel, and undo the ones that succeeded when a later one fails or the workflow is cancelled:
+
+```java
+Saga saga = ctx.saga();
+saga.addCompensation(() -> trips.cancelFlight(trip.id()));
+saga.addCompensation(() -> trips.cancelHotel(trip.id()));
+Promise<String> flight = ctx.async(() -> trips.bookFlight(trip));
+Promise<String> hotel = ctx.async(() -> trips.bookHotel(trip));
+try {
+  Promise.allOf(flight, hotel).get();
+} catch (ActivityFailedException | CancelledException e) {
+  saga.compensate();
+  throw e;
+}
+
+client.cancel("trip-9");
+```
+
+Durastep is not on Maven Central yet. Build it with `./mvnw install` and depend on
+`io.github.yanivks-pro:durastep-core:0.4.0`. The engine creates its tables in a `durastep` schema on start.
+
+## Try the examples
+
+Three small applications show these features with scripted scenarios, printing what happens as it happens. You
+need Docker and Java 25:
+
+```bash
+docker compose up -d --wait
+./mvnw -q install -Dmaven.test.skip=true
+./mvnw -q -pl durastep-examples exec:java -Dexample=trip -Dscenario=no-cars
+```
+
+- **Order processing:** a flaky payment gateway is retried, and the card is charged once.
+- **Trip booking:** flight and hotel in parallel, then a car; when no car is left, or the traveller cancels, a
+  saga undoes every booking.
+- **Expense approval:** waits for the manager's decision, escalates to the director when nobody answers in time,
+  and can be withdrawn.
+
+See [the examples](durastep-examples/README.md) for every scenario and sample output.
+
+## Features in v0.4
 
 - **Workflows as plain Java**, with activities declared as ordinary interfaces.
 - **Durable history and replay:** finished steps return their saved result and are never run again.
@@ -166,12 +217,26 @@ Durastep is not on Maven Central yet. Build it with `./mvnw install` and depend 
 - **Named queues:** `ActivityOptions.queue("gpu")` routes activities to the engines that serve that queue.
 - **Graceful shutdown and outages:** `stop()` lets work finish within a grace period and hands the rest to other
   engines at once; a database outage pauses work with one warning and resumes it by itself.
+- **Signals:** `client.signal(id, name, payload)` sends data to a running workflow, and
+  `ctx.awaitSignal(name, type[, timeout])` waits for it. Signals that arrive early are kept, each is received
+  exactly once, and a request ID makes retried sends safe.
+- **Published status:** `ctx.setStatus(text)` records where a workflow stands; `describe()` returns it with the
+  workflow's state.
+- **Cooperative cancellation:** `client.cancel(id)` makes the workflow throw `CancelledException` at its next
+  wait point, so it can clean up with ordinary activities before it ends CANCELLED.
+- **Sagas:** `ctx.saga()` collects undo steps and runs them in reverse order; every one runs even if another
+  fails.
+- **Parallel branches:** `ctx.async(...)` returns a `Promise`, and `Promise.allOf` and `Promise.anyOf` combine
+  them. Branches' activities run at the same time, while their code takes turns and receives results in
+  history order, so replay stays exact.
 
-## Limits of v0.3
+## Limits of v0.4
 
-- **No signals, cancellation, sagas or parallel steps** (M4).
+- **Only the main workflow code can wait for signals**, not code in parallel branches.
 - **No CLI, metrics or Spring Boot starter yet** (M5), so blocked workflows are visible only in the database,
   and there is no Maven Central release.
+- **No workflow versioning yet** (M6): changing the steps of a workflow while instances of it are running makes
+  them blocked with a mismatch.
 - **Notifications do not pass through PgBouncer in transaction mode**; behind it, engines fall back to polling
   once a second.
 
@@ -206,6 +271,13 @@ Every significant decision is recorded as an [Architecture Decision Record](docs
   rejected. [ADR-0018](docs/adr/0018-leases-fencing-and-heartbeats.md)
 - **One decider per workflow.** A unique index and leases keep each workflow sequential while many run in
   parallel. [ADR-0019](docs/adr/0019-one-decider-per-workflow.md)
+- **Signals in, published status out.** Signals go through the inbox like every other change; a status the
+  workflow publishes replaces on-demand queries. [ADR-0020](docs/adr/0020-published-status-instead-of-queries.md)
+- **Cooperative cancellation.** The workflow is asked to stop, not killed, so it can clean up; the moment it
+  learns of it comes from the history. [ADR-0021](docs/adr/0021-cooperative-cancellation.md)
+- **Parallel steps on one logical thread.** Each branch numbers its own steps and receives results in history
+  order; delivering them in turn order instead breaks replay in 142 of 300 random runs.
+  [ADR-0022](docs/adr/0022-parallel-steps-on-one-logical-thread.md)
 - **The database guards the rules.** Constraints reject invalid states, such as a second decision task for the
   same workflow or a finished workflow without a finish time. [ADR-0007](docs/adr/0007-schema-migrations-with-flyway.md)
 
@@ -221,7 +293,8 @@ cd durastep
 
 `./mvnw verify` checks formatting, compiles with Error Prone, runs the unit, architecture and Postgres
 integration tests, including the crash, process-kill, zombie and outage tests, and fails if line coverage drops
-below 85%. `./mvnw verify -Pchaos` runs the chaos test, which takes a few minutes.
+below 85%. It also runs every [example](durastep-examples/README.md) scenario end to end. `./mvnw verify -Pchaos`
+runs the chaos test, which takes a few minutes.
 
 ## Roadmap
 
@@ -231,8 +304,8 @@ below 85%. `./mvnw verify -Pchaos` runs the chaos test, which takes a few minute
 | M1 Core idea (v0.1) | Kill it mid-workflow, restart, and it resumes exactly | ✅ Done |
 | M2 Reliability (v0.2) | Retries, timeouts and durable timers that can sleep for days | ✅ Done |
 | M3 Distributed (v0.3) | Many instances, leases and fencing; chaos test with 0 lost and 0 duplicates | ✅ Done |
-| M4 Interaction (v0.4) | Signals, cancellation, sagas and parallel steps | 🚧 Next |
-| M5 Operability (v0.5) | CLI, metrics and Grafana, Spring Boot starter | ⏳ Planned |
+| M4 Interaction (v0.4) | Signals, cancellation, sagas, parallel steps and runnable examples | ✅ Done |
+| M5 Operability (v0.5) | CLI, metrics and Grafana, Spring Boot starter | 🚧 Next |
 | M6 Safe evolution (v0.6) | Versioning, replay testing of new code, payload encryption | ⏳ Planned |
 | M7 Showcase (v1.0) | Dashboard, tracing, benchmarks, complete documentation | ⏳ Planned |
 
