@@ -21,6 +21,7 @@ class WorkflowQueryTest {
     assertThat(query.stateFilter()).isEmpty();
     assertThat(query.typeFilter()).isEmpty();
     assertThat(query.blockedFilter()).isEmpty();
+    assertThat(query.idPrefixFilter()).isEmpty();
     assertThat(query.maxResults()).isEqualTo(WorkflowQuery.DEFAULT_LIMIT);
   }
 
@@ -29,11 +30,16 @@ class WorkflowQueryTest {
     WorkflowQuery all = WorkflowQuery.all();
 
     WorkflowQuery narrowed =
-        all.state(WorkflowState.RUNNING).type(SomeWorkflow.class).blocked(true).limit(5);
+        all.state(WorkflowState.RUNNING)
+            .type(SomeWorkflow.class)
+            .blocked(true)
+            .idStartsWith("order-")
+            .limit(5);
 
     assertThat(narrowed.stateFilter()).contains(WorkflowState.RUNNING);
     assertThat(narrowed.typeFilter()).contains("SomeWorkflow");
     assertThat(narrowed.blockedFilter()).contains(true);
+    assertThat(narrowed.idPrefixFilter()).contains("order-");
     assertThat(narrowed.maxResults()).isEqualTo(5);
     assertThat(all.stateFilter()).isEmpty();
   }
@@ -46,5 +52,12 @@ class WorkflowQueryTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(WorkflowQuery.all().limit(WorkflowQuery.MAX_LIMIT).maxResults())
         .isEqualTo(WorkflowQuery.MAX_LIMIT);
+  }
+
+  @Test
+  void anIdPrefixMustNotBeEmpty() {
+    assertThatThrownBy(() -> WorkflowQuery.all().idStartsWith(""))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must not be empty");
   }
 }

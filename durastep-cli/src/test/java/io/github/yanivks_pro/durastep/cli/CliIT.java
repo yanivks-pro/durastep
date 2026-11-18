@@ -13,9 +13,14 @@ import io.github.yanivks_pro.durastep.api.WorkflowState;
 import io.github.yanivks_pro.durastep.testkit.WorkflowReplayException;
 import io.github.yanivks_pro.durastep.testkit.WorkflowReplayer;
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -25,6 +30,9 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -285,6 +293,82 @@ class CliIT {
     assertThat(unknown.err()).isEqualTo("error: no workflow nope exists\n");
     assertThat(badDatabase.exitCode()).isEqualTo(1);
     assertThat(badDatabase.err()).startsWith("error: could not read statistics");
+  }
+
+  record Background(Thread thread, StringWriter out, StringWriter err, AtomicInteger exitCode) {
+    URI printedAddress() {
+      await().atMost(WAIT).until(() -> out.toString().contains("(read-only)"));
+      Matcher printed =
+          Pattern.compile("Dashboard at (http://\\S+/) \\(read-only\\)").matcher(out.toString());
+      assertThat(printed.find()).as(out.toString()).isTrue();
+      return URI.create(printed.group(1));
+    }
+
+    int stop() throws InterruptedException {
+      thread.interrupt();
+      assertThat(thread.join(WAIT)).isTrue();
+      return exitCode.get();
+    }
+  }
+
+  @Test
+  void dashboardServesTheDashboardOnThisMachineUntilStopped() throws Exception {
+    order("order-1");
+    Background dashboard = inBackground("dashboard", "--port", "0");
+    URI address = dashboard.printedAddress();
+
+    assertThat(address.getHost()).isEqualTo("127.0.0.1");
+    HttpResponse<String> page = get(address.resolve("/workflows"));
+    assertThat(page.statusCode()).isEqualTo(200);
+    assertThat(page.body()).contains("<td class=\"id\">order-1</td>");
+    assertThat(dashboard.err().toString()).isEmpty();
+
+    assertThat(dashboard.stop()).isZero();
+    assertThatThrownBy(() -> get(address)).isInstanceOf(IOException.class);
+  }
+
+  @Test
+  void dashboardWarnsWhenOtherMachinesCanReachIt() throws Exception {
+    Background dashboard = inBackground("dashboard", "--port", "0", "--bind", "0.0.0.0");
+    URI address = dashboard.printedAddress();
+
+    assertThat(address.getHost()).isEqualTo("0.0.0.0");
+    assertThat(dashboard.err().toString())
+        .contains(
+            "warning: the dashboard has no login; anyone who can reach 0.0.0.0 can see workflow"
+                + " IDs, types, statuses and errors");
+    assertThat(dashboard.stop()).isZero();
+  }
+
+  @Test
+  void dashboardRefusesAnAddressThatDoesNotExist() {
+    Result result = cli("dashboard", "--bind", "256.0.0.1");
+
+    assertThat(result.exitCode()).isEqualTo(DurastepCli.FAILED);
+    assertThat(result.err()).contains("256.0.0.1");
+  }
+
+  private static Background inBackground(String... args) {
+    StringWriter out = new StringWriter();
+    StringWriter err = new StringWriter();
+    AtomicInteger exitCode = new AtomicInteger(-1);
+    Io io =
+        new Io(
+            new BufferedReader(new StringReader("")),
+            new PrintWriter(out, true),
+            new PrintWriter(err, true),
+            Map.of(
+                "DURASTEP_DB_URL", postgres.getJdbcUrl(),
+                "DURASTEP_DB_USER", postgres.getUsername(),
+                "DURASTEP_DB_PASSWORD", postgres.getPassword()),
+            false);
+    Thread thread = Thread.ofVirtual().start(() -> exitCode.set(DurastepCli.run(io, args)));
+    return new Background(thread, out, err, exitCode);
+  }
+
+  private static HttpResponse<String> get(URI address) throws Exception {
+    return HttpClient.newHttpClient()
+        .send(HttpRequest.newBuilder(address).build(), HttpResponse.BodyHandlers.ofString());
   }
 
   private static void order(String id) throws Exception {

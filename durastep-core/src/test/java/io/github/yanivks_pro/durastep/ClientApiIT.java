@@ -140,6 +140,36 @@ class ClientApiIT {
             client.list(WorkflowQuery.all().state(WorkflowState.RUNNING).blocked(false).limit(1)))
         .extracting(WorkflowDescription::id)
         .containsExactly("greeter-1");
+    assertThat(client.list(WorkflowQuery.all().idStartsWith("echo-")))
+        .extracting(WorkflowDescription::id)
+        .containsExactly("echo-2", "echo-1");
+    assertThat(client.list(WorkflowQuery.all().idStartsWith("echo_"))).isEmpty();
+    assertThat(client.list(WorkflowQuery.all().idStartsWith("%"))).isEmpty();
+  }
+
+  @Test
+  void countByStateCountsEveryStateIncludingTheEmptyOnes() throws Exception {
+    DurastepClient client = DurastepClient.connect(dataSource);
+    assertThat(client.countByState())
+        .containsOnlyKeys(WorkflowState.values())
+        .allSatisfy((state, count) -> assertThat(count).isZero());
+
+    startEngine();
+    engine.client().start(Echo.class, "echo-1", "one").result(WAIT);
+    engine.client().start(Echo.class, "echo-2", "two").result(WAIT);
+    engine.client().start(Greeter.class, "greeter-1", "hello");
+    engine.client().start(Greeter.class, "greeter-2", "hello").cancel();
+    await()
+        .atMost(WAIT)
+        .until(
+            () ->
+                engine.client().handle("greeter-2").describe().state() == WorkflowState.CANCELLED);
+
+    assertThat(client.countByState())
+        .containsEntry(WorkflowState.RUNNING, 1L)
+        .containsEntry(WorkflowState.COMPLETED, 2L)
+        .containsEntry(WorkflowState.FAILED, 0L)
+        .containsEntry(WorkflowState.CANCELLED, 1L);
   }
 
   @Test

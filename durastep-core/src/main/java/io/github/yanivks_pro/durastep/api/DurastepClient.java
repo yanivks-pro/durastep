@@ -3,6 +3,7 @@ package io.github.yanivks_pro.durastep.api;
 import io.github.yanivks_pro.durastep.payload.LimitedPayloadConverter;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import javax.sql.DataSource;
@@ -161,6 +162,18 @@ public interface DurastepClient {
    * @return a snapshot of the counts
    */
   EngineStats stats();
+
+  /**
+   * Counts the workflows in the database by state, including finished ones that retention has not
+   * deleted yet.
+   *
+   * <pre>{@code
+   * long failed = client.countByState().get(WorkflowState.FAILED);
+   * }</pre>
+   *
+   * @return a count for every state, zero when none are in it
+   */
+  Map<WorkflowState, Long> countByState();
 
   /**
    * Retries every blocked workflow now. See {@link WorkflowHandle#retryNow(String)}.

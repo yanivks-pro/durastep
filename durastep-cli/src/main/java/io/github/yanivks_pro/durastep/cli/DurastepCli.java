@@ -21,6 +21,7 @@ import picocli.CommandLine.Command;
       ReadCommands.ShowCommand.class,
       ReadCommands.HistoryCommand.class,
       ReadCommands.StatsCommand.class,
+      DashboardCommand.class,
       ChangeCommands.SignalCommand.class,
       ChangeCommands.CancelCommand.class,
       ChangeCommands.TerminateCommand.class,
