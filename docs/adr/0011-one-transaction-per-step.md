@@ -1,6 +1,6 @@
 # ADR-0011: One transaction per step
 
-- **Status:** Accepted
+- **Status:** Accepted; the `NOTIFY` follow-up is amended by [ADR-0031](0031-notify-after-commit.md)
 - **Date:** 2026-11-14
 - **Requirements:** FR-21, FR-23, FR-33, NFR-02
 

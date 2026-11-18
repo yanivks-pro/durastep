@@ -23,6 +23,12 @@ All notable changes to Durastep are recorded here. The format follows
 - New module `durastep-opentelemetry`: `DurastepTracing.of(openTelemetry)`. The Spring Boot starter uses it when
   an `OpenTelemetry` bean is present.
 
+### Changed
+
+- Engines are woken after a transaction commits, in a short transaction of their own, instead of inside it. The
+  notification no longer holds Postgres's database-wide notify lock across every commit's disk write, so engines
+  scale again: on the benchmark laptop, three engines went from 149 to 228 workflows/s. See ADR-0031.
+
 ## [0.6.0] - 2026-11-17
 
 ### Added
