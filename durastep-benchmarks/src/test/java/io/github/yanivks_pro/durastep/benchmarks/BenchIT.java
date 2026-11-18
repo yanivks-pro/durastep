@@ -41,4 +41,34 @@ class BenchIT {
     assertThat(Files.readString(out.resolve("results.md")))
         .contains("## Throughput (drain test)", "| Step: scheduled → next step recorded |");
   }
+
+  @Test
+  void aShortScalingRunUsesSeparateEngineProcessesAndExplainsWhereTimeGoes(@TempDir Path out)
+      throws Exception {
+    Bench.main(
+        "scaling",
+        "--workflows",
+        "200",
+        "--backlog",
+        "200",
+        "--image",
+        System.getProperty("postgres.image", "postgres:16-alpine"),
+        "--out",
+        out.toString());
+
+    JsonNode results = JsonMapper.builder().build().readTree(out.resolve("results.json").toFile());
+    JsonNode scaling = results.path("scaling");
+    assertThat(scaling).hasSize(3);
+    for (int i = 0; i < 3; i++) {
+      JsonNode run = scaling.get(i);
+      assertThat(run.path("engines").asInt()).isEqualTo(i + 1);
+      assertThat(run.path("perSecond").asDouble()).isPositive();
+      assertThat(run.path("commitsPerWorkflow").asDouble()).isPositive();
+      assertThat(run.path("engineCpuCores").asDouble()).isPositive();
+      assertThat(run.path("topStatements").size()).isPositive();
+    }
+    assertThat(results.path("backlog")).hasSize(1);
+    assertThat(Files.readString(out.resolve("results.md")))
+        .contains("## Scaling (drain test, one engine per process)", "## Backlog size");
+  }
 }

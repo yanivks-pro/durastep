@@ -1,6 +1,6 @@
 BENCH_JAR := durastep-benchmarks/target/durastep-benchmarks.jar
 
-.PHONY: build bench bench-throughput bench-latency
+.PHONY: build bench bench-throughput bench-latency bench-scaling
 
 build:
 	./mvnw -B -ntp -q install -Dmaven.test.skip=true
@@ -16,3 +16,6 @@ bench-throughput: $(BENCH_JAR)
 
 bench-latency: $(BENCH_JAR)
 	java -jar $(BENCH_JAR) latency $(ARGS)
+
+bench-scaling: $(BENCH_JAR)
+	java -jar $(BENCH_JAR) scaling $(ARGS)
