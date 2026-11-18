@@ -209,6 +209,19 @@ public interface DurastepClient {
   DurastepClient actingAs(String operator);
 
   /**
+   * Returns a client that captures the caller's trace context when it starts a workflow, so that
+   * the workflow's work joins the caller's trace. An engine's own client uses the engine's tracing.
+   *
+   * <pre>{@code
+   * DurastepClient client = DurastepClient.connect(dataSource).withTracing(tracing);
+   * }</pre>
+   *
+   * @param tracing the tracing to capture with, or {@link WorkflowTracing#NONE}
+   * @return a client that captures trace context
+   */
+  DurastepClient withTracing(WorkflowTracing tracing);
+
+  /**
    * Returns a handle to an existing workflow.
    *
    * @param workflowId the workflow's business ID

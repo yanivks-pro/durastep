@@ -31,6 +31,7 @@ import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -151,6 +152,8 @@ class JdbcWorkflowStoreIT {
         .isEqualTo(
             new ActivityToRun(
                 "order-42",
+                "OrderWorkflow",
+                Map.of(),
                 2,
                 "OrderActivities.chargeCard",
                 CHARGE_ARGS,

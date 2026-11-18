@@ -47,6 +47,9 @@ class Checkout {
 dependencies injected. `@ActivityImplementation` registers a bean for every interface it implements, or for the
 interfaces it names.
 
+With [`durastep-opentelemetry`](../durastep-opentelemetry/README.md) on the classpath and an `OpenTelemetry` bean,
+workflows are traced: the engine and the client use it, or any `WorkflowTracing` bean of your own.
+
 ## Settings
 
 ```yaml

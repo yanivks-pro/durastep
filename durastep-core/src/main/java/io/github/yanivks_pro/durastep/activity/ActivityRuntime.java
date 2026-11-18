@@ -5,6 +5,7 @@ import io.github.yanivks_pro.durastep.activity.ActivityResult.Completed;
 import io.github.yanivks_pro.durastep.activity.ActivityResult.Failed;
 import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.ActivityTimeoutException;
+import io.github.yanivks_pro.durastep.api.ActivityTrace;
 import io.github.yanivks_pro.durastep.api.PayloadTooLargeException;
 import io.github.yanivks_pro.durastep.payload.Payload;
 import io.github.yanivks_pro.durastep.payload.PayloadConverter;
@@ -13,6 +14,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -46,6 +48,19 @@ public final class ActivityRuntime {
       int scheduledSeq,
       ActivityOptions options,
       Heartbeat heartbeat)
+      throws InterruptedException {
+    return execute(
+        activity, arguments, workflowId, scheduledSeq, options, heartbeat, ActivityTrace.NONE);
+  }
+
+  public ActivityResult execute(
+      String activity,
+      Payload arguments,
+      String workflowId,
+      int scheduledSeq,
+      ActivityOptions options,
+      Heartbeat heartbeat,
+      ActivityTrace trace)
       throws InterruptedException {
     Optional<RegisteredActivity> registered = registry.find(activity);
     if (registered.isEmpty()) {
@@ -82,10 +97,9 @@ public final class ActivityRuntime {
                     MDC.setContextMap(logContext);
                   }
                   try {
-                    outcome.complete(
-                        ActivityScope.callWith(
-                            context,
-                            () -> invoke(registered.get().implementation(), method, values)));
+                    Callable<Object> traced =
+                        trace.wrap(() -> invoke(registered.get().implementation(), method, values));
+                    outcome.complete(ActivityScope.callWith(context, traced::call));
                   } catch (Throwable e) {
                     outcome.completeExceptionally(e);
                   }

@@ -83,9 +83,11 @@ public final class DurastepEngine implements AutoCloseable {
                 builder.historyLimit),
             CrashPoints.NONE,
             health,
-            listener);
+            listener,
+            builder.tracing);
     this.client =
-        new StoreBackedClient(store, converter, StoreBackedClient.RESULT_POLL_INTERVAL, listener);
+        new StoreBackedClient(store, converter, StoreBackedClient.RESULT_POLL_INTERVAL, listener)
+            .withTracing(builder.tracing);
     this.listener =
         new NotificationListener(dataSource, store.notificationChannel(), worker::wake, health);
     this.shutdownGrace = builder.shutdownGrace;
@@ -186,6 +188,7 @@ public final class DurastepEngine implements AutoCloseable {
     private Duration shutdownGrace = Duration.ofSeconds(30);
     private int maxPayloadSize = LimitedPayloadConverter.DEFAULT_LIMIT;
     private EngineListener listener = EngineListener.NONE;
+    private WorkflowTracing tracing = WorkflowTracing.NONE;
     private PayloadCodec payloadCodec;
     private int historyWarnAt = Worker.Settings.DEFAULT_HISTORY_WARN_AT;
     private int historyLimit = Worker.Settings.DEFAULT_HISTORY_LIMIT;
@@ -390,6 +393,19 @@ public final class DurastepEngine implements AutoCloseable {
      */
     public Builder listener(EngineListener listener) {
       this.listener = Objects.requireNonNull(listener, "listener");
+      return this;
+    }
+
+    /**
+     * Sets how the engine traces workflows, so that each workflow's activity attempts, timers,
+     * signals and end join the trace of the request that started it. The {@code
+     * durastep-opentelemetry} module provides tracing with OpenTelemetry. Defaults to none.
+     *
+     * @param tracing the tracing
+     * @return this builder
+     */
+    public Builder tracing(WorkflowTracing tracing) {
+      this.tracing = Objects.requireNonNull(tracing, "tracing");
       return this;
     }
 

@@ -13,10 +13,21 @@ import io.github.yanivks_pro.durastep.api.PayloadCodec;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
+import io.github.yanivks_pro.durastep.api.WorkflowTracing;
 import io.github.yanivks_pro.durastep.micrometer.DurastepMetrics;
+import io.github.yanivks_pro.durastep.opentelemetry.DurastepTracing;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
+import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.SpanData;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -165,6 +176,74 @@ class StarterIT {
               assertThat(client.handle("order-2").describe().state())
                   .isEqualTo(WorkflowState.RUNNING);
             });
+  }
+
+  @Test
+  void anOpenTelemetryBeanTracesWorkflowsUnlessTheModuleIsMissingOrTheAppHasItsOwnTracing() {
+    InMemorySpanExporter spans = InMemorySpanExporter.create();
+    app.withBean(OpenTelemetry.class, () -> openTelemetry(spans))
+        .run(
+            context -> {
+              assertThat(context.getBean(WorkflowTracing.class))
+                  .isInstanceOf(DurastepTracing.class);
+              context
+                  .getBean(DurastepClient.class)
+                  .start(OrderWorkflow.class, "traced-1", "traced-1")
+                  .result(WAIT);
+              await()
+                  .atMost(WAIT)
+                  .until(
+                      () ->
+                          spans.getFinishedSpanItems().stream()
+                              .anyMatch(span -> span.getName().equals("workflow OrderWorkflow")));
+              assertThat(spans.getFinishedSpanItems())
+                  .extracting(SpanData::getName)
+                  .contains(
+                      "start OrderWorkflow",
+                      "activity Payments.charge",
+                      "activity Mail.confirm",
+                      "workflow OrderWorkflow");
+              assertThat(spans.getFinishedSpanItems().stream().map(SpanData::getTraceId).distinct())
+                  .hasSize(1);
+            });
+
+    app.withBean(OpenTelemetry.class, () -> openTelemetry(spans))
+        .withPropertyValues("durastep.worker.enabled=false")
+        .run(
+            context -> {
+              context.getBean(DurastepClient.class).start(OrderWorkflow.class, "traced-2", "x");
+              assertThat(traceContextOf("traced-2")).contains("traceparent");
+            });
+
+    app.withBean(OpenTelemetry.class, () -> openTelemetry(spans))
+        .withClassLoader(new FilteredClassLoader(DurastepTracing.class))
+        .run(context -> assertThat(context).doesNotHaveBean(WorkflowTracing.class));
+
+    WorkflowTracing own = WorkflowTracing.NONE;
+    app.withBean(OpenTelemetry.class, () -> openTelemetry(spans))
+        .withBean(WorkflowTracing.class, () -> own)
+        .run(context -> assertThat(context.getBean(WorkflowTracing.class)).isSameAs(own));
+  }
+
+  private static OpenTelemetrySdk openTelemetry(InMemorySpanExporter spans) {
+    return OpenTelemetrySdk.builder()
+        .setTracerProvider(
+            SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spans)).build())
+        .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+        .build();
+  }
+
+  private static String traceContextOf(String workflowId) throws SQLException {
+    try (Connection connection = dataSource.getConnection();
+        PreparedStatement statement =
+            connection.prepareStatement(
+                "SELECT trace_context::text FROM durastep.workflows WHERE id = ?")) {
+      statement.setString(1, workflowId);
+      try (ResultSet row = statement.executeQuery()) {
+        row.next();
+        return row.getString(1);
+      }
+    }
   }
 
   @Test

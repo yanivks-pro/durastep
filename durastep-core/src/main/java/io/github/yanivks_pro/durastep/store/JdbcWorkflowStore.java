@@ -54,6 +54,8 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.regex.Pattern;
 import javax.sql.DataSource;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 public final class JdbcWorkflowStore {
 
@@ -66,6 +68,8 @@ public final class JdbcWorkflowStore {
 
   public static final String DEFAULT_QUEUE = "default";
 
+  private static final JsonMapper TRACE_JSON = JsonMapper.builder().build();
+  private static final TypeReference<Map<String, String>> TRACE_CONTEXT = new TypeReference<>() {};
   private static final Pattern SCHEMA_NAME = Pattern.compile("[a-z_][a-z0-9_]{0,62}");
 
   private final Transactions transactions;
@@ -109,6 +113,15 @@ public final class JdbcWorkflowStore {
 
   public StartResult start(
       String workflowId, String type, Payload input, Optional<Duration> timeout) {
+    return start(workflowId, type, input, timeout, Map.of());
+  }
+
+  public StartResult start(
+      String workflowId,
+      String type,
+      Payload input,
+      Optional<Duration> timeout,
+      Map<String, String> traceContext) {
     return transactions.inTransaction(
         "start workflow " + workflowId,
         connection -> {
@@ -117,12 +130,13 @@ public final class JdbcWorkflowStore {
                   connection,
                   "INSERT INTO "
                       + workflows
-                      + " (id, type, state, input, history_length)"
-                      + " VALUES (?, ?, 'RUNNING', CAST(? AS jsonb), 1)"
+                      + " (id, type, state, input, history_length, trace_context)"
+                      + " VALUES (?, ?, 'RUNNING', CAST(? AS jsonb), 1, CAST(? AS jsonb))"
                       + " ON CONFLICT (id) DO NOTHING",
                   workflowId,
                   type,
-                  input.json());
+                  input.json(),
+                  traceContext.isEmpty() ? null : TRACE_JSON.writeValueAsString(traceContext));
           if (inserted == 0) {
             return new StartResult(false, existingType(connection, workflowId));
           }
@@ -212,7 +226,21 @@ public final class JdbcWorkflowStore {
         "load workflow " + task.workflowId(),
         Connection.TRANSACTION_REPEATABLE_READ,
         connection -> {
-          String type = existingType(connection, task.workflowId());
+          String type;
+          Map<String, String> traceContext;
+          try (PreparedStatement statement =
+              connection.prepareStatement(
+                  "SELECT type, trace_context::text FROM " + workflows + " WHERE id = ?")) {
+            statement.setString(1, task.workflowId());
+            try (ResultSet row = statement.executeQuery()) {
+              if (!row.next()) {
+                throw new IllegalStateException(
+                    "workflow " + task.workflowId() + " does not exist");
+              }
+              type = row.getString(1);
+              traceContext = traceContext(row.getString(2));
+            }
+          }
           List<HistoryEntry> entries = new ArrayList<>();
           try (PreparedStatement statement =
               connection.prepareStatement(
@@ -247,7 +275,7 @@ public final class JdbcWorkflowStore {
               }
             }
           }
-          return new DecisionInput(type, entries, arrived);
+          return new DecisionInput(type, traceContext, entries, arrived);
         });
   }
 
@@ -431,9 +459,11 @@ public final class JdbcWorkflowStore {
         connection -> {
           try (PreparedStatement statement =
               connection.prepareStatement(
-                  "SELECT event_type, payload::text FROM "
+                  "SELECT h.event_type, h.payload::text, w.type, w.trace_context::text FROM "
                       + history
-                      + " WHERE workflow_id = ? AND seq = ?")) {
+                      + " h JOIN "
+                      + workflows
+                      + " w ON w.id = h.workflow_id WHERE h.workflow_id = ? AND h.seq = ?")) {
             statement.setString(1, task.workflowId());
             statement.setInt(2, task.activitySeq());
             try (ResultSet row = statement.executeQuery()) {
@@ -449,6 +479,8 @@ public final class JdbcWorkflowStore {
               }
               return new ActivityToRun(
                   task.workflowId(),
+                  row.getString(3),
+                  traceContext(row.getString(4)),
                   task.activitySeq(),
                   scheduled.activity(),
                   scheduled.arguments(),
@@ -1160,6 +1192,13 @@ public final class JdbcWorkflowStore {
       }
       statement.executeUpdate();
     }
+  }
+
+  private static Map<String, String> traceContext(String json) {
+    if (json == null) {
+      return Map.of();
+    }
+    return TRACE_JSON.readValue(json, TRACE_CONTEXT);
   }
 
   private String existingType(Connection connection, String workflowId) throws SQLException {

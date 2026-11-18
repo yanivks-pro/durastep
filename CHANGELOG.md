@@ -13,6 +13,11 @@ All notable changes to Durastep are recorded here. The format follows
   `http://127.0.0.1:8099/`; `DurastepDashboard.start(client, port)` embeds it. Each workflow has a page with its
   summary, why it is blocked, a chart of its steps over time and its history; pages never show workflow data.
 - `DurastepClient.countByState()` and `WorkflowQuery.idStartsWith(prefix)`.
+- Tracing: one trace per workflow. The caller's trace context is stored with the workflow (migration `V2`), and
+  each activity attempt, timer, signal and the end of the workflow join it, on any engine. The core has a small
+  hook, `WorkflowTracing`, set with `DurastepEngine.Builder.tracing(...)` and `DurastepClient.withTracing(...)`.
+- New module `durastep-opentelemetry`: `DurastepTracing.of(openTelemetry)`. The Spring Boot starter uses it when
+  an `OpenTelemetry` bean is present.
 
 ## [0.6.0] - 2026-11-17
 

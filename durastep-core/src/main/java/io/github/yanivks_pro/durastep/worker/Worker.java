@@ -7,16 +7,23 @@ import io.github.yanivks_pro.durastep.activity.Backoff;
 import io.github.yanivks_pro.durastep.api.ActivityOptions;
 import io.github.yanivks_pro.durastep.api.ActivityOutcome;
 import io.github.yanivks_pro.durastep.api.ActivityTimeoutException;
+import io.github.yanivks_pro.durastep.api.ActivityTrace;
 import io.github.yanivks_pro.durastep.api.EngineListener;
 import io.github.yanivks_pro.durastep.api.NonDeterminismException;
 import io.github.yanivks_pro.durastep.api.RetryPolicy;
+import io.github.yanivks_pro.durastep.api.TraceTarget;
 import io.github.yanivks_pro.durastep.api.WorkKind;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
+import io.github.yanivks_pro.durastep.api.WorkflowTracing;
 import io.github.yanivks_pro.durastep.runtime.Command;
 import io.github.yanivks_pro.durastep.runtime.Command.CancelWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.CompleteWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.FailWorkflow;
 import io.github.yanivks_pro.durastep.runtime.Command.SetStatus;
+import io.github.yanivks_pro.durastep.runtime.HistoryEntry;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.SignalReceived;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerFired;
+import io.github.yanivks_pro.durastep.runtime.HistoryEvent.TimerStarted;
 import io.github.yanivks_pro.durastep.runtime.WorkflowBlockedException;
 import io.github.yanivks_pro.durastep.runtime.WorkflowDefinition;
 import io.github.yanivks_pro.durastep.runtime.WorkflowRegistry;
@@ -27,11 +34,14 @@ import io.github.yanivks_pro.durastep.store.CrashPoint;
 import io.github.yanivks_pro.durastep.store.CrashPoints;
 import io.github.yanivks_pro.durastep.store.DatabaseHealth;
 import io.github.yanivks_pro.durastep.store.DecisionInput;
+import io.github.yanivks_pro.durastep.store.InboxEntry;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import io.github.yanivks_pro.durastep.store.StaleTaskException;
 import io.github.yanivks_pro.durastep.store.StoreException;
 import io.github.yanivks_pro.durastep.store.TaskKind;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -133,6 +143,7 @@ public final class Worker {
   static final String MDC_ATTEMPT = "attempt";
 
   private final EngineListener listener;
+  private final WorkflowTracing tracing;
   private final JdbcWorkflowStore store;
   private final WorkflowRegistry workflows;
   private final WorkflowRuntime workflowRuntime;
@@ -180,7 +191,30 @@ public final class Worker {
       CrashPoints crashPoints,
       DatabaseHealth health,
       EngineListener listener) {
+    this(
+        store,
+        workflows,
+        workflowRuntime,
+        activityRuntime,
+        settings,
+        crashPoints,
+        health,
+        listener,
+        WorkflowTracing.NONE);
+  }
+
+  public Worker(
+      JdbcWorkflowStore store,
+      WorkflowRegistry workflows,
+      WorkflowRuntime workflowRuntime,
+      ActivityRuntime activityRuntime,
+      Settings settings,
+      CrashPoints crashPoints,
+      DatabaseHealth health,
+      EngineListener listener,
+      WorkflowTracing tracing) {
     this.listener = SafeEngineListener.around(listener);
+    this.tracing = SafeWorkflowTracing.around(tracing);
     this.health = health;
     this.store = store;
     this.workflows = workflows;
@@ -458,6 +492,7 @@ public final class Worker {
       List<Command> commands =
           workflowRuntime.decide(definition.get(), task.workflowId(), input.historyWithInbox());
       store.commitDecision(task, input, commands);
+      traceDecision(task, input, commands);
       listener.decisionMade(input.workflowType(), Duration.ofNanos(System.nanoTime() - started));
       finalState(commands)
           .ifPresent(state -> listener.workflowFinished(input.workflowType(), state));
@@ -470,6 +505,46 @@ public final class Worker {
       listener.staleResultRejected(WorkKind.DECISION);
       log.warn("discarded a decision for workflow {}: {}", task.workflowId(), e.getMessage());
     }
+  }
+
+  private void traceDecision(ClaimedTask task, DecisionInput input, List<Command> commands) {
+    if (WorkflowTracing.NONE.equals(tracing)) {
+      return;
+    }
+    Map<Integer, HistoryEntry> history = new HashMap<>();
+    input.history().forEach(entry -> history.put(entry.seq(), entry));
+    for (InboxEntry arrived : input.inbox()) {
+      switch (arrived.event()) {
+        case TimerFired fired ->
+            traceTimer(task, input, history.get(fired.startedSeq()), arrived.receivedAt());
+        case SignalReceived signal ->
+            tracing.signalReceived(target(task, input, signal.name()), arrived.receivedAt());
+        default -> {}
+      }
+    }
+    finalState(commands)
+        .ifPresent(
+            state ->
+                tracing.workflowFinished(
+                    target(task, input, input.workflowType()),
+                    state,
+                    input.history().getFirst().recordedAt(),
+                    Instant.now()));
+  }
+
+  private void traceTimer(
+      ClaimedTask task, DecisionInput input, HistoryEntry started, Instant firedAt) {
+    if (started != null && started.event() instanceof TimerStarted timer) {
+      String name =
+          timer.signal() != null
+              ? "wait for signal " + timer.signal() + " up to " + timer.duration()
+              : "sleep " + timer.duration();
+      tracing.timerFired(target(task, input, name), started.recordedAt(), firedAt);
+    }
+  }
+
+  private static TraceTarget target(ClaimedTask task, DecisionInput input, String name) {
+    return new TraceTarget(input.traceContext(), task.workflowId(), input.workflowType(), name, 0);
   }
 
   private static Optional<WorkflowState> finalState(List<Command> commands) {
@@ -564,6 +639,16 @@ public final class Worker {
       throws InterruptedException {
     ActivityOptions options = activity.options();
     long started = System.nanoTime();
+    ActivityTrace trace =
+        tracing.activityStarted(
+            new TraceTarget(
+                activity.traceContext(),
+                activity.workflowId(),
+                activity.workflowType(),
+                activity.activity(),
+                task.attempt()));
+    ActivityOutcome traced = ActivityOutcome.FAILED;
+    String tracedFailure = null;
     try {
       Duration attemptLease =
           options.heartbeatTimeout().orElse(options.attemptTimeout().plus(lease));
@@ -576,7 +661,11 @@ public final class Worker {
               activity.workflowId(),
               activity.scheduledSeq(),
               options,
-              () -> extendLease(task, attemptLease));
+              () -> extendLease(task, attemptLease),
+              trace);
+      if (result instanceof Failed attemptFailed) {
+        tracedFailure = attemptFailed.failure().type();
+      }
       long saveBefore =
           leaseExtendedAt.getOrDefault(task.id(), System.nanoTime())
               + attemptLease.minus(SAVE_MARGIN).toNanos();
@@ -590,10 +679,9 @@ public final class Worker {
             saveBefore(
                 saveBefore,
                 () -> store.retryActivity(task, failed.failure(), delay, options.totalTimeout()));
+        traced = retried ? ActivityOutcome.RETRIED : finalOutcome(result);
         listener.activityFinished(
-            activity.activity(),
-            retried ? ActivityOutcome.RETRIED : finalOutcome(result),
-            Duration.ofNanos(System.nanoTime() - started));
+            activity.activity(), traced, Duration.ofNanos(System.nanoTime() - started));
         log.info(
             retried
                 ? "attempt {} of {} for workflow {} failed with {}; retrying in {}"
@@ -610,12 +698,12 @@ public final class Worker {
               store.completeActivity(task, result);
               return true;
             });
+        traced = finalOutcome(result);
         listener.activityFinished(
-            activity.activity(),
-            finalOutcome(result),
-            Duration.ofNanos(System.nanoTime() - started));
+            activity.activity(), traced, Duration.ofNanos(System.nanoTime() - started));
       }
     } catch (StaleTaskException e) {
+      tracedFailure = StaleTaskException.class.getName();
       listener.staleResultRejected(WorkKind.ACTIVITY);
       log.warn(
           "discarded the result of {} for workflow {}: {}",
@@ -628,8 +716,10 @@ public final class Worker {
               + " again with the same idempotency key",
           activity.activity(),
           task.workflowId());
+      tracedFailure = StoreException.class.getName();
     } finally {
       leaseExtendedAt.remove(task.id());
+      trace.end(traced, traced == ActivityOutcome.SUCCEEDED ? null : tracedFailure);
     }
   }
 
