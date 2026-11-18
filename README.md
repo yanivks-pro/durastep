@@ -176,13 +176,33 @@ Durastep is not on Maven Central yet. Build it with `./mvnw install` and depend 
 `io.github.yanivks-pro:durastep-core:0.6.0`, or on `durastep-spring-boot-starter` in a Spring Boot application.
 The engine creates its tables in a `durastep` schema on start.
 
+## Try it in one command
+
+You need only Docker:
+
+```bash
+git clone https://github.com/yanivks-pro/durastep.git && cd durastep
+docker compose up -d --wait
+open http://127.0.0.1:8099
+```
+
+This builds Durastep and starts Postgres, three engines, a load of orders, trips, expense claims and reports, the
+read-only dashboard, Prometheus and Grafana on [http://127.0.0.1:3000](http://127.0.0.1:3000). Then break it:
+
+```bash
+demo/chaos.sh
+```
+
+It kills engines with `kill -9` and freezes them while they work, then waits for the started workflows to finish
+and checks that none was lost and no effect happened twice. The [demo guide](demo/README.md) explains the report.
+
 ## Try the examples
 
 Three small applications show these features with scripted scenarios, printing what happens as it happens. You
 need Docker and Java 25:
 
 ```bash
-docker compose up -d --wait
+docker compose up -d --wait postgres
 ./mvnw -q install -Dmaven.test.skip=true
 ./mvnw -q -pl durastep-examples exec:java -Dexample=trip -Dscenario=no-cars
 ```
@@ -221,15 +241,8 @@ To look rather than ask, `durastep dashboard` serves a read-only [dashboard](dur
 `http://127.0.0.1:8099/`: workflows by state, blocked workflows, waiting work, a list to search and filter, and a
 page per workflow with a chart of its steps and its history.
 
-To watch it, start Prometheus and Grafana with the load generator from the examples:
-
-```bash
-docker compose --profile observability up -d --wait
-./mvnw -q -pl durastep-examples exec:java -Dexample=load
-open http://localhost:3000
-```
-
-The **Durastep** dashboard shows workflows started and finished, running and blocked workflows, waiting work and
+To watch it, the [one-command demo](#try-it-in-one-command) runs Prometheus and Grafana on
+[http://127.0.0.1:3000](http://127.0.0.1:3000). The **Durastep** dashboard shows workflows started and finished, running and blocked workflows, waiting work and
 its age, activity attempts by outcome, latencies, timer lateness and takeovers. Every engine log line carries the
 workflow ID, activity and attempt in the MDC.
 

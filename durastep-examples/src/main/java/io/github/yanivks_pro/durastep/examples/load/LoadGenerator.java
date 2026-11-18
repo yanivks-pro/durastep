@@ -1,16 +1,14 @@
 package io.github.yanivks_pro.durastep.examples.load;
 
 import com.sun.net.httpserver.HttpServer;
-import io.github.yanivks_pro.durastep.api.DurastepClient;
 import io.github.yanivks_pro.durastep.api.DurastepEngine;
+import io.github.yanivks_pro.durastep.api.EngineListener;
 import io.github.yanivks_pro.durastep.api.EngineStats;
 import io.github.yanivks_pro.durastep.examples.Narrator;
 import io.github.yanivks_pro.durastep.examples.expense.Approvals;
-import io.github.yanivks_pro.durastep.examples.expense.Decision;
 import io.github.yanivks_pro.durastep.examples.expense.ExpenseClaim;
 import io.github.yanivks_pro.durastep.examples.expense.ExpenseWorkflow;
 import io.github.yanivks_pro.durastep.examples.order.Mail;
-import io.github.yanivks_pro.durastep.examples.order.Order;
 import io.github.yanivks_pro.durastep.examples.order.OrderWorkflow;
 import io.github.yanivks_pro.durastep.examples.order.Payments;
 import io.github.yanivks_pro.durastep.examples.order.Warehouse;
@@ -25,26 +23,20 @@ import io.micrometer.core.instrument.distribution.DistributionStatisticConfig;
 import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import java.io.IOException;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import javax.sql.DataSource;
 
 public final class LoadGenerator {
 
   private static final Duration START_EVERY = Duration.ofMillis(200);
   private static final Duration REPORT_EVERY = Duration.ofSeconds(10);
-  private static final long APPROVAL_WAIT_SECONDS = 2;
 
   private final PrometheusMeterRegistry registry = newRegistry();
   private final DurastepMetrics metrics = DurastepMetrics.bindTo(registry);
@@ -54,8 +46,7 @@ public final class LoadGenerator {
       Executors.newScheduledThreadPool(2, Thread.ofVirtual().factory());
   private final List<ScheduledFuture<?>> periodic = new ArrayList<>();
   private final Narrator narrator;
-  private final AtomicLong started = new AtomicLong();
-  private final AtomicLong lateDecisions = new AtomicLong();
+  private final WorkflowMix mix;
 
   private LoadGenerator(DataSource dataSource, int port, Narrator narrator) throws IOException {
     this.narrator = narrator;
@@ -66,23 +57,16 @@ public final class LoadGenerator {
             .workflow(OrderWorkflow.class, OrderWorkflow::new)
             .workflow(TripWorkflow.class, TripWorkflow::new)
             .workflow(ExpenseWorkflow.class, ExpenseWorkflow::new)
+            .workflow(ReportWorkflow.class, ReportWorkflow::new)
             .activities(Payments.class, new FlakyPayments())
             .activities(Warehouse.class, new QuickWarehouse())
             .activities(Mail.class, (customer, orderId, trackingNumber) -> {})
             .activities(Bookings.class, new BusyBookings())
             .activities(Approvals.class, new QuietApprovals())
+            .activities(ReportWorkflow.Reports.class, new ReportWorkflow.SlowReports(effect -> {}))
             .build();
-    this.server = HttpServer.create(new InetSocketAddress(port), 0);
-    server.createContext(
-        "/metrics",
-        exchange -> {
-          byte[] body = registry.scrape().getBytes(StandardCharsets.UTF_8);
-          exchange.getResponseHeaders().set("Content-Type", "text/plain; version=0.0.4");
-          exchange.sendResponseHeaders(200, body.length);
-          try (OutputStream out = exchange.getResponseBody()) {
-            out.write(body);
-          }
-        });
+    this.server = MetricsEndpoint.start(registry, port);
+    this.mix = new WorkflowMix(engine.client(), narrator, EngineListener.NONE);
   }
 
   public static LoadGenerator start(DataSource dataSource, int port, Narrator narrator)
@@ -90,10 +74,9 @@ public final class LoadGenerator {
     LoadGenerator generator = new LoadGenerator(dataSource, port, narrator);
     generator.engine.start();
     generator.metrics.watch(generator.engine.client());
-    generator.server.start();
     generator.periodic.add(
         generator.scheduler.scheduleAtFixedRate(
-            generator::startOneWorkflow, 0, START_EVERY.toMillis(), TimeUnit.MILLISECONDS));
+            generator.mix::startOne, 0, START_EVERY.toMillis(), TimeUnit.MILLISECONDS));
     generator.periodic.add(
         generator.scheduler.scheduleAtFixedRate(
             generator::report,
@@ -151,64 +134,10 @@ public final class LoadGenerator {
     narrator.say(
         "load",
         "stopped after starting "
-            + started.get()
+            + mix.started()
             + " workflows; "
-            + lateDecisions.get()
+            + mix.lateDecisions()
             + " decisions came after their claim had closed");
-  }
-
-  private void startOneWorkflow() {
-    try {
-      DurastepClient client = engine.client();
-      String id = UUID.randomUUID().toString().substring(0, 8);
-      int pick = ThreadLocalRandom.current().nextInt(10);
-      if (pick < 4) {
-        client.start(
-            OrderWorkflow.class, "order-" + id, new Order("order-" + id, "Ada", "keyboard", 4_999));
-      } else if (pick < 7) {
-        client.start(TripWorkflow.class, "trip-" + id, new Trip("trip-" + id, "Ada", "Lisbon"));
-      } else {
-        String claimId = "expense-" + id;
-        client.start(
-            ExpenseWorkflow.class,
-            claimId,
-            new ExpenseClaim(
-                claimId,
-                "Ada",
-                12_000,
-                "conference ticket",
-                APPROVAL_WAIT_SECONDS,
-                APPROVAL_WAIT_SECONDS));
-        scheduleDecision(client, claimId);
-      }
-      started.incrementAndGet();
-    } catch (RuntimeException e) {
-      narrator.say("load", "could not start a workflow: " + e.getMessage());
-    }
-  }
-
-  private void scheduleDecision(DurastepClient client, String claimId) {
-    ThreadLocalRandom random = ThreadLocalRandom.current();
-    if (random.nextInt(5) == 0) {
-      return;
-    }
-    boolean approved = random.nextInt(10) < 7;
-    long thinkingMillis = random.nextLong(200, 3_000);
-    Thread.ofVirtual()
-        .start(
-            () -> {
-              try {
-                Thread.sleep(thinkingMillis);
-                client.signal(
-                    claimId,
-                    ExpenseWorkflow.DECISION,
-                    new Decision(approved, "Grace (manager)", approved ? "fine" : "no budget"));
-              } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-              } catch (IllegalStateException claimAlreadyClosedAfterItsTimeout) {
-                lateDecisions.incrementAndGet();
-              }
-            });
   }
 
   private void report() {
@@ -216,7 +145,7 @@ public final class LoadGenerator {
       EngineStats stats = engine.client().stats();
       narrator.say(
           "load",
-          started.get()
+          mix.started()
               + " started, "
               + stats.running()
               + " running, "

@@ -11,7 +11,7 @@ The examples use only the public `api` package; a test makes sure of it.
 You need Docker and Java 25.
 
 ```bash
-docker compose up -d --wait
+docker compose up -d --wait postgres
 ./mvnw -q install -Dmaven.test.skip=true
 ./mvnw -q -pl durastep-examples exec:java -Dexample=trip -Dscenario=no-cars
 ```
@@ -81,14 +81,16 @@ prints as it changes. In the story the waits are days; in the demo they are thre
 
 ## Watch it in Grafana
 
-The load generator runs a steady mix of all three workflows, with flaky payments, sold-out cars and slow
-approvers, and serves its metrics for Prometheus. Start Postgres, Prometheus and Grafana, then the load:
+The load generator runs a steady mix of all three workflows and a slow report, with flaky payments, sold-out cars
+and slow approvers, and serves its metrics for Prometheus. Start Postgres, Prometheus and Grafana, then the load:
 
 ```bash
-docker compose --profile observability up -d --wait
+docker compose up -d --wait postgres prometheus grafana
 ./mvnw -q install -Dmaven.test.skip=true
 ./mvnw -q -pl durastep-examples exec:java -Dexample=load
 ```
+
+The [one-command demo](../demo/README.md) runs the same mix on three engines in containers instead.
 
 Open [http://localhost:3000](http://localhost:3000): the **Durastep** dashboard shows workflows started and
 finished, running and blocked workflows, waiting work and its age, activity attempts by outcome, the 95th

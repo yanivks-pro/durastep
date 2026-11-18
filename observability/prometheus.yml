@@ -6,3 +6,9 @@ scrape_configs:
   - job_name: durastep
     static_configs:
       - targets: ["host.docker.internal:8081"]
+  - job_name: durastep-demo
+    dns_sd_configs:
+      - names: ["engine", "load"]
+        type: A
+        port: 8081
+        refresh_interval: 5s

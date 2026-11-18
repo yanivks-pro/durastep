@@ -167,7 +167,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "durastep_workflows_running",
+          "expr": "max(durastep_workflows_running)",
           "refId": "A"
         }
       ]
@@ -228,7 +228,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "durastep_workflows_blocked",
+          "expr": "max(durastep_workflows_blocked)",
           "refId": "A"
         }
       ]
@@ -286,7 +286,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (kind, queue) (durastep_tasks_ready)",
+          "expr": "max by (kind, queue) (durastep_tasks_ready)",
           "legendFormat": "{{kind}} / {{queue}}",
           "refId": "A"
         }
@@ -332,7 +332,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "durastep_tasks_oldest_age_seconds",
+          "expr": "max(durastep_tasks_oldest_age_seconds)",
           "legendFormat": "oldest",
           "refId": "A"
         }
