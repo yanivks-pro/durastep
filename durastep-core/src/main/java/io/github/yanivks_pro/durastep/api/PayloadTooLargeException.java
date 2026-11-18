@@ -15,7 +15,10 @@ public final class PayloadTooLargeException extends RuntimeException {
 
   private static final long serialVersionUID = 1L;
 
+  /** The size of the data, in bytes. */
   private final int size;
+
+  /** The limit it exceeded, in bytes. */
   private final int limit;
 
   /**

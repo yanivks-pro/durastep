@@ -8,7 +8,13 @@ import java.util.Objects;
 import java.util.Optional;
 import javax.sql.DataSource;
 
-/** Starts workflows and finds existing ones. Obtained from {@link DurastepEngine#client()}. */
+/**
+ * Starts workflows and finds existing ones. Obtained from {@link DurastepEngine#client()} or {@link
+ * #connect(javax.sql.DataSource)}.
+ *
+ * <p>Durastep provides the implementation. This interface is not meant to be implemented by
+ * applications, and it may gain methods in minor releases.
+ */
 public interface DurastepClient {
 
   /**

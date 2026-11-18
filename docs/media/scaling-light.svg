@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 370" width="680" height="370" font-family="system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Throughput by number of engines</title>
+<desc id="d">Workflows per second draining 10,000 three-step workflows. Before the fix: 138, 145 and 149 with 1, 2 and 3 engines. After: 159, 219 and 228.</desc>
+<rect width="680" height="370" rx="8" fill="#fcfcfb"/>
+<text x="24" y="34" font-size="17" font-weight="600" fill="#0b0b0b">Throughput by number of engines</text>
+<text x="24" y="56" font-size="13" fill="#52514e">Workflows per second, draining 10,000 three-step workflows on a laptop</text>
+<rect x="24" y="70" width="12" height="12" rx="3" fill="#2a78d6"/>
+<text x="42" y="80" font-size="13" fill="#0b0b0b">Before: notify inside the commit</text>
+<rect x="288.0" y="70" width="12" height="12" rx="3" fill="#eb6834"/>
+<text x="306.0" y="80" font-size="13" fill="#0b0b0b">After: notify after the commit</text>
+<line x1="56" y1="310.0" x2="656" y2="310.0" stroke="#e6e5e1" stroke-width="1"/>
+<text x="48" y="314.0" font-size="12" text-anchor="end" fill="#52514e">0</text>
+<line x1="56" y1="271.2" x2="656" y2="271.2" stroke="#e6e5e1" stroke-width="1"/>
+<text x="48" y="275.2" font-size="12" text-anchor="end" fill="#52514e">50</text>
+<line x1="56" y1="232.4" x2="656" y2="232.4" stroke="#e6e5e1" stroke-width="1"/>
+<text x="48" y="236.4" font-size="12" text-anchor="end" fill="#52514e">100</text>
+<line x1="56" y1="193.6" x2="656" y2="193.6" stroke="#e6e5e1" stroke-width="1"/>
+<text x="48" y="197.6" font-size="12" text-anchor="end" fill="#52514e">150</text>
+<line x1="56" y1="154.8" x2="656" y2="154.8" stroke="#e6e5e1" stroke-width="1"/>
+<text x="48" y="158.8" font-size="12" text-anchor="end" fill="#52514e">200</text>
+<line x1="56" y1="116.0" x2="656" y2="116.0" stroke="#e6e5e1" stroke-width="1"/>
+<text x="48" y="120.0" font-size="12" text-anchor="end" fill="#52514e">250</text>
+<path d="M99.0,310 V206.9 Q99.0,202.9 103.0,202.9 H151.0 Q155.0,202.9 155.0,206.9 V310 Z" fill="#2a78d6"/>
+<text x="127.0" y="195.9" font-size="13" text-anchor="middle" fill="#0b0b0b">138</text>
+<path d="M157.0,310 V190.6 Q157.0,186.6 161.0,186.6 H209.0 Q213.0,186.6 213.0,190.6 V310 Z" fill="#eb6834"/>
+<text x="185.0" y="179.6" font-size="13" text-anchor="middle" fill="#0b0b0b">159</text>
+<text x="156.0" y="332" font-size="13" text-anchor="middle" fill="#0b0b0b">1 engine</text>
+<path d="M299.0,310 V201.5 Q299.0,197.5 303.0,197.5 H351.0 Q355.0,197.5 355.0,201.5 V310 Z" fill="#2a78d6"/>
+<text x="327.0" y="190.5" font-size="13" text-anchor="middle" fill="#0b0b0b">145</text>
+<path d="M357.0,310 V144.1 Q357.0,140.1 361.0,140.1 H409.0 Q413.0,140.1 413.0,144.1 V310 Z" fill="#eb6834"/>
+<text x="385.0" y="133.1" font-size="13" text-anchor="middle" fill="#0b0b0b">219</text>
+<text x="356.0" y="332" font-size="13" text-anchor="middle" fill="#0b0b0b">2 engines</text>
+<path d="M499.0,310 V198.4 Q499.0,194.4 503.0,194.4 H551.0 Q555.0,194.4 555.0,198.4 V310 Z" fill="#2a78d6"/>
+<text x="527.0" y="187.4" font-size="13" text-anchor="middle" fill="#0b0b0b">149</text>
+<path d="M557.0,310 V137.1 Q557.0,133.1 561.0,133.1 H609.0 Q613.0,133.1 613.0,137.1 V310 Z" fill="#eb6834"/>
+<text x="585.0" y="126.1" font-size="13" text-anchor="middle" fill="#0b0b0b">228</text>
+<text x="556.0" y="332" font-size="13" text-anchor="middle" fill="#0b0b0b">3 engines</text>
+<text x="24" y="356" font-size="12" fill="#52514e">Before, every commit that created work waited for a single Postgres lock. See ADR-0031.</text>
+</svg>

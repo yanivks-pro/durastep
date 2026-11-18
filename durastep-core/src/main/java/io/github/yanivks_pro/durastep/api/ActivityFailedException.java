@@ -20,9 +20,16 @@ public final class ActivityFailedException extends RuntimeException {
 
   private static final long serialVersionUID = 1L;
 
+  /** The activity, such as {@code Payments.charge}. */
   private final String activity;
+
+  /** The class name of the last attempt's error. */
   private final String failureType;
+
+  /** The message of the last attempt's error. */
   private final String failureMessage;
+
+  /** How many attempts were made. */
   private final int attempts;
 
   /**

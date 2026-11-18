@@ -74,6 +74,11 @@ so those commits queued up behind each other's disk writes, while Postgres used 
 anyway. The lock disappeared and three engines reached 238/s, but under a steady load tasks piled up while idle
 workers slept until their safety poll: the median step went from 12 ms to over a second.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/scaling-dark.svg">
+  <img alt="Throughput by number of engines: before the fix 138, 145 and 149 workflows a second with 1, 2 and 3 engines; after it 159, 219 and 228" src="media/scaling-light.svg" width="680">
+</picture>
+
 **Second fix, kept.** Send the notification right after the commit, in a short transaction of its own. That
 transaction writes nothing, so it holds the lock for microseconds, and every new task still wakes the engines
 ([ADR-0031](adr/0031-notify-after-commit.md)).

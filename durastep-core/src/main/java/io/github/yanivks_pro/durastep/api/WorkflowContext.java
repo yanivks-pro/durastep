@@ -12,6 +12,9 @@ import java.util.function.Supplier;
  *
  * <p>Every method returns the same values when the workflow is replayed, so workflow code stays
  * deterministic.
+ *
+ * <p>Durastep provides the implementation. This interface is not meant to be implemented by
+ * applications, and it may gain methods in minor releases.
  */
 public interface WorkflowContext {
 

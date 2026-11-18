@@ -17,7 +17,11 @@ public enum WorkflowState {
   /** Stopped on purpose, either cooperatively or by an operator. */
   CANCELLED;
 
-  /** Returns {@code true} if this state can never change again. */
+  /**
+   * Returns whether this state can never change again.
+   *
+   * @return {@code true} for COMPLETED, FAILED and CANCELLED
+   */
   public boolean isFinal() {
     return this != RUNNING;
   }

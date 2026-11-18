@@ -60,6 +60,11 @@ percentile. The [benchmarks](docs/benchmarks.md) show how this was measured, whi
 why, and how they found Postgres's notify lock capping three engines at 1.08 times one, and the fix that took
 them to 1.43.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/scaling-dark.svg">
+  <img alt="Throughput by number of engines: before the fix 138, 145 and 149 workflows a second with 1, 2 and 3 engines; after it 159, 219 and 228" src="docs/media/scaling-light.svg" width="680">
+</picture>
+
 **Focused tests** prove each guarantee on its own, against Postgres 16 and the latest Postgres, on every commit:
 
 - A process killed with `kill -9` in the middle of a workflow is replaced, and the card is charged once.
@@ -138,6 +143,22 @@ with people in the loop, you also need Java 25.
 - **One engine runs fewer than 200 workflows a second on a laptop**, and a step takes 16 ms at the median, short
   of the targets; the [benchmarks](docs/benchmarks.md#what-limits-durastep-now) explain why and what would help.
 
+## API stability
+
+From 1.0, Durastep follows [semantic versioning](https://semver.org) for its public API:
+
+- the package `io.github.yanivks_pro.durastep.api` in `durastep-core`;
+- `WorkflowReplayer` and `WorkflowReplayException` in the testkit, `DurastepMetrics`, `DurastepDashboard` and
+  `DurastepTracing`;
+- the Spring Boot starter's `@WorkflowDefinition`, `@ActivityImplementation` and `durastep.*` properties.
+
+Everything else, including the other packages in `durastep-core`, is internal and may change in any release; a
+build rule fails if the public API ever exposes an internal type. Durastep implements `DurastepClient`,
+`WorkflowHandle`, `WorkflowContext`, `ActivityContext` and `Promise` for you, and they may gain methods in minor
+releases: in tests, use the [testkit](durastep-testkit/README.md) or a real engine instead of implementing them.
+The database schema is upgraded by migrations when an engine starts, and running workflows carry on across
+upgrades.
+
 ## Related work
 
 Durable execution is a well-explored idea, and Durastep borrows from the systems below. It differs mainly in being
@@ -189,6 +210,7 @@ Durastep deliberately does not try to be:
   including the rules workflow code must follow, [operations](docs/guides/operations.md) and
   [security](docs/guides/security.md).
 - [Benchmarks](docs/benchmarks.md), the [demo](demo/README.md), and the [changelog](CHANGELOG.md).
+- [Contributing](CONTRIBUTING.md), the [code of conduct](CODE_OF_CONDUCT.md) and the [security policy](SECURITY.md).
 - Every significant decision is an [Architecture Decision Record](docs/adr/README.md). A few that shape the rest:
   an [embedded library](docs/adr/0002-embedded-library.md) on [Postgres only](docs/adr/0003-postgres-only.md),
   [full replay from a pure runtime](docs/adr/0009-pure-workflow-runtime.md),
