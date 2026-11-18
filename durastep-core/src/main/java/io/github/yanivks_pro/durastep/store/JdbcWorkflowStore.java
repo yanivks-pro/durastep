@@ -1260,12 +1260,8 @@ public final class JdbcWorkflowStore {
     return channel;
   }
 
-  private void notifyWork(Connection connection, TaskKind kind, String queue) throws SQLException {
-    try (PreparedStatement statement = connection.prepareStatement("SELECT pg_notify(?, ?)")) {
-      statement.setString(1, channel);
-      statement.setString(2, kind.name() + ":" + queue);
-      statement.execute();
-    }
+  private void notifyWork(Connection connection, TaskKind kind, String queue) {
+    transactions.notifyAfterCommit(connection, channel, kind.name() + ":" + queue);
   }
 
   private static int update(Connection connection, String sql, Object... parameters)

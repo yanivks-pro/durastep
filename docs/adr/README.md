@@ -34,3 +34,4 @@ for the rules, and [the template](0000-template.md) for the format.
 | [0027](0027-pluggable-payload-encryption.md) | Pluggable payload encryption | Accepted |
 | [0028](0028-read-only-dashboard.md) | A read-only dashboard on the JDK's own web server | Accepted |
 | [0030](0030-one-trace-per-workflow.md) | One trace per workflow, through a small hook in the core | Accepted |
+| [0031](0031-notify-after-commit.md) | Wake engines after the commit, not inside it | Accepted |

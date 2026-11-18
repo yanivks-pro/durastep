@@ -1,6 +1,7 @@
 # ADR-0017: Postgres is the task queue
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0031](0031-notify-after-commit.md), which sends the notification after
+  the commit
 - **Date:** 2026-11-15
 - **Requirements:** FR-19, FR-24, C-01, C-02
 
