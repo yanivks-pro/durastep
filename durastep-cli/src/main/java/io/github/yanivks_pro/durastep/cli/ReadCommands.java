@@ -6,6 +6,9 @@ import io.github.yanivks_pro.durastep.api.WorkflowDescription;
 import io.github.yanivks_pro.durastep.api.WorkflowHandle;
 import io.github.yanivks_pro.durastep.api.WorkflowQuery;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
+import io.github.yanivks_pro.durastep.history.Timeline;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -119,14 +122,13 @@ final class ReadCommands {
         result.set("workflow", describe(workflow));
         result.put("error", error.orElse(null));
         ArrayNode timeline = result.putArray("timeline");
-        Timeline lines = new Timeline();
-        for (HistoryRecord event : history) {
+        for (Timeline.Entry entry : Timeline.of(history).entries()) {
           timeline.add(
               Output.object()
-                  .put("seq", event.seq())
-                  .put("at", Output.iso(event.recordedAt()))
-                  .put("type", event.type())
-                  .put("summary", lines.describe(event)));
+                  .put("seq", entry.seq())
+                  .put("at", Output.iso(entry.at()))
+                  .put("type", entry.type())
+                  .put("summary", entry.text()));
         }
         Output.print(io, result);
         return 0;
@@ -151,8 +153,23 @@ final class ReadCommands {
       error.ifPresent(
           message -> io.out().println("error:   " + message + "   (retrying with backoff)"));
       io.out().println();
-      Timeline.print(io, history);
+      printTimeline(history);
       return 0;
+    }
+
+    private void printTimeline(List<HistoryRecord> history) {
+      if (history.isEmpty()) {
+        return;
+      }
+      Instant first = history.getFirst().recordedAt();
+      for (Timeline.Entry entry : Timeline.of(history).entries()) {
+        io.out()
+            .printf(
+                "  #%-3d %8s  %s%n",
+                entry.seq(),
+                "+" + Output.seconds(Duration.between(first, entry.at())).replace(" s", "s"),
+                entry.text());
+      }
     }
   }
 

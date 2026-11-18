@@ -2,6 +2,8 @@ package io.github.yanivks_pro.durastep.dashboard;
 
 import io.github.yanivks_pro.durastep.api.WorkflowDescription;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -72,9 +74,11 @@ final class Html {
             <tbody>
             """);
     for (WorkflowDescription workflow : workflows) {
-      html.append("<tr><td class=\"id\">")
+      html.append("<tr><td class=\"id\"><a href=\"")
+          .append(escape(workflowHref(workflow.id())))
+          .append("\">")
           .append(escape(workflow.id()))
-          .append("</td><td>")
+          .append("</a></td><td>")
           .append(escape(workflow.type()))
           .append("</td><td>")
           .append(stateBadge(workflow))
@@ -89,7 +93,12 @@ final class Html {
     return html.append("</tbody>\n</table></div>\n").toString();
   }
 
-  private static String stateBadge(WorkflowDescription workflow) {
+  static String workflowHref(String workflowId) {
+    return WorkflowPage.PREFIX
+        + URLEncoder.encode(workflowId, StandardCharsets.UTF_8).replace("+", "%20");
+  }
+
+  static String stateBadge(WorkflowDescription workflow) {
     String state = workflow.state().name().toLowerCase(Locale.ROOT);
     String badge = "<span class=\"badge " + state + "\">" + label(workflow.state()) + "</span>";
     return workflow.blocked() ? badge + " <span class=\"badge blocked\">Blocked</span>" : badge;

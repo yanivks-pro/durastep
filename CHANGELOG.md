@@ -10,7 +10,8 @@ All notable changes to Durastep are recorded here. The format follows
 
 - New module `durastep-dashboard`: a read-only web dashboard with an overview (workflows by state, blocked
   workflows, waiting work) and a list of workflows to search and filter. `durastep dashboard` starts it on
-  `http://127.0.0.1:8099/`; `DurastepDashboard.start(client, port)` embeds it.
+  `http://127.0.0.1:8099/`; `DurastepDashboard.start(client, port)` embeds it. Each workflow has a page with its
+  summary, why it is blocked, a chart of its steps over time and its history; pages never show workflow data.
 - `DurastepClient.countByState()` and `WorkflowQuery.idStartsWith(prefix)`.
 
 ## [0.6.0] - 2026-11-17

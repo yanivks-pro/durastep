@@ -10,6 +10,7 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,10 +61,16 @@ final class Router implements HttpHandler {
             Response.html(
                 200, WorkflowListPage.render(client, Parameters.parse(uri.getRawQuery())));
         case "/style.css" -> new Response(200, CSS, stylesheet);
-        default -> error(404, "Not found", "There is no page at this address.");
+        default ->
+            path.startsWith(WorkflowPage.PREFIX)
+                ? Response.html(
+                    200, WorkflowPage.render(client, WorkflowPage.idFromPath(path), Instant.now()))
+                : error(404, "Not found", "There is no page at this address.");
       };
     } catch (BadRequestException e) {
       return error(400, "Bad request", e.getMessage());
+    } catch (NotFoundException e) {
+      return error(404, "Not found", e.getMessage());
     } catch (RuntimeException e) {
       log.warn("the dashboard could not show {}", path, e);
       return error(

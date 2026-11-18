@@ -9,6 +9,7 @@ import io.github.yanivks_pro.durastep.api.DurastepEngine;
 import io.github.yanivks_pro.durastep.api.Workflow;
 import io.github.yanivks_pro.durastep.api.WorkflowContext;
 import io.github.yanivks_pro.durastep.api.WorkflowFailedException;
+import io.github.yanivks_pro.durastep.api.WorkflowHandle;
 import io.github.yanivks_pro.durastep.api.WorkflowState;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -31,8 +32,10 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 class DashboardIT {
 
   private static final Duration WAIT = Duration.ofSeconds(20);
-  private static final Pattern ID_CELL = Pattern.compile("<td class=\"id\">(.*?)</td>");
+  private static final Pattern ID_CELL =
+      Pattern.compile("<td class=\"id\"><a href=\"([^\"]*)\">(.*?)</a></td>");
   private static final byte[] IPV6_LOOPBACK = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  private static final String SLASHED_ID = "team/a b+c";
   private static final String EVIL_ID = "<b>evil</b>&co";
   private static final String EVIL_STATUS = "<img src=x onerror=alert(1)>";
 
@@ -48,6 +51,19 @@ class DashboardIT {
     public String run(WorkflowContext ctx, String status) {
       ctx.setStatus(status);
       return ctx.awaitSignal("go", String.class);
+    }
+  }
+
+  interface Shop {
+    String pack(String order);
+  }
+
+  static final class Shipping implements Workflow<String, String> {
+    @Override
+    public String run(WorkflowContext ctx, String order) {
+      String box = ctx.activities(Shop.class).pack(order);
+      ctx.sleep(Duration.ofMillis(200));
+      return box + ctx.awaitSignal("go", String.class, Duration.ofMinutes(1)).orElse("late");
     }
   }
 
@@ -85,12 +101,19 @@ class DashboardIT {
             .workflow(Waiting.class, Waiting::new)
             .workflow(Broken.class, Broken::new)
             .workflow(Refuses.class, Refuses::new)
+            .workflow(Shipping.class, Shipping::new)
+            .activities(Shop.class, order -> "box for " + order + " ")
             .build();
     engine.start();
     DurastepClient client = engine.client();
     for (int i = 0; i < 100; i++) {
       client.start(Waiting.class, "bulk-%03d".formatted(i), "waiting for a go");
     }
+    WorkflowHandle<String> shipping = client.start(Shipping.class, "ship-1", "order-9");
+    await().atMost(WAIT).until(() -> client.handle("ship-1").history().size() >= 6);
+    client.signal("ship-1", "go", "and go");
+    assertThat(shipping.result(WAIT)).isEqualTo("box for order-9 and go");
+    client.start(Echo.class, SLASHED_ID, "x").result(WAIT);
     client.start(Refuses.class, "refused-1", "x");
     await()
         .atMost(WAIT)
@@ -126,7 +149,7 @@ class DashboardIT {
     assertThat(overview.body())
         .contains(card("", "/workflows?state=RUNNING", 102, "Running"))
         .contains(card(" warn", "/workflows?blocked=yes", 1, "Blocked"))
-        .contains(card("", "/workflows?state=COMPLETED", 2, "Completed"))
+        .contains(card("", "/workflows?state=COMPLETED", 4, "Completed"))
         .contains(card(" bad", "/workflows?state=FAILED", 1, "Failed"))
         .contains(card("", "/workflows?state=CANCELLED", 1, "Cancelled"))
         .contains("<h2>Waiting for an engine</h2>")
@@ -152,10 +175,12 @@ class DashboardIT {
   void theListFiltersByIdTypeStateAndBlockedAndKeepsTheFiltersInTheForm() throws Exception {
     assertThat(ids(get("/workflows?id=order-").body())).containsExactly("order-2", "order-1");
     assertThat(ids(get("/workflows?id=bulk-00").body())).hasSize(10);
-    assertThat(ids(get("/workflows?state=completed").body())).containsExactly("order-2", "order-1");
+    assertThat(ids(get("/workflows?state=completed").body()))
+        .containsExactly("order-2", "order-1", SLASHED_ID, "ship-1");
     assertThat(ids(get("/workflows?state=CANCELLED").body())).containsExactly("cancelled-1");
     assertThat(ids(get("/workflows?blocked=yes").body())).containsExactly("broken-1");
-    assertThat(ids(get("/workflows?type=Echo").body())).containsExactly("order-2", "order-1");
+    assertThat(ids(get("/workflows?type=Echo").body()))
+        .containsExactly("order-2", "order-1", SLASHED_ID);
     assertThat(ids(get("/workflows?type=Waiting&blocked=no&id=c").body()))
         .containsExactly("cancelled-1");
 
@@ -214,7 +239,6 @@ class DashboardIT {
     assertThat(badState.statusCode()).isEqualTo(400);
     assertThat(badState.body()).contains("There is no workflow state called &quot;sleeping&quot;.");
     assertThat(get("/workflows?blocked=maybe").statusCode()).isEqualTo(400);
-    assertThat(get("/workflows/order-1/extra").statusCode()).isEqualTo(404);
 
     HttpResponse<String> post =
         http.send(
@@ -292,6 +316,72 @@ class DashboardIT {
         .hasMessageContaining("could not open the dashboard on");
   }
 
+  @Test
+  void aWorkflowPageShowsItsSummaryStepsAndHistory() throws Exception {
+    HttpResponse<String> page = get("/workflows/ship-1");
+
+    assertThat(page.statusCode()).isEqualTo(200);
+    assertThat(page.body())
+        .contains("<title>ship-1 · Durastep</title>")
+        .contains("<tr><th>Type</th><td>Shipping</td></tr>")
+        .contains("<span class=\"badge completed\">Completed</span>")
+        .contains("<tr><th>Duration</th><td>took ")
+        .contains("<svg class=\"gantt\"")
+        .contains("<rect class=\"bar completed\"")
+        .contains(">Shop.pack</text>", ">sleeping for PT0.2S</text>")
+        .contains(">waiting for signal go up to PT1M</text>")
+        .contains("<title>Shop.pack: ")
+        .contains("received signal go", "woke up from #", "completed</td>")
+        .doesNotContain("order-9", "box for", "and go", "Why it is blocked")
+        .doesNotContain("http-equiv=\"refresh\"");
+  }
+
+  @Test
+  void aBlockedWorkflowsPageSaysWhyAndHowToRetryIt() throws Exception {
+    String page = get("/workflows/broken-1").body();
+
+    assertThat(page)
+        .contains("<h2>Why it is blocked</h2>")
+        .contains("a bug in version 1.4.1")
+        .contains("<code>durastep retry-now broken-1 --reason &quot;…&quot;</code>")
+        .contains("<span class=\"badge blocked\">Blocked</span>")
+        .contains("running for ")
+        .contains("No steps yet.")
+        .contains("<meta http-equiv=\"refresh\" content=\"5\">");
+  }
+
+  @Test
+  void theListLinksToEachWorkflowEvenWhenItsIdNeedsEncoding() throws Exception {
+    String list = get("/workflows").body();
+
+    String slashed = hrefOf(list, Html.escape(SLASHED_ID));
+    assertThat(slashed).isEqualTo("/workflows/team%2Fa%20b%2Bc");
+    assertThat(get(slashed).body()).contains("<h1>team/a b+c</h1>");
+
+    String evil = hrefOf(list, Html.escape(EVIL_ID));
+    assertThat(evil).isEqualTo("/workflows/%3Cb%3Eevil%3C%2Fb%3E%26co");
+    String evilPage = get(evil).body();
+    assertThat(evilPage)
+        .contains("<h1>&lt;b&gt;evil&lt;/b&gt;&amp;co</h1>")
+        .contains("&lt;img src=x onerror=alert(1)&gt;")
+        .doesNotContain(EVIL_ID, EVIL_STATUS);
+  }
+
+  @Test
+  void anUnknownWorkflowOrAMalformedAddressIsNotFound() throws Exception {
+    HttpResponse<String> unknown = get("/workflows/no-such-workflow");
+    assertThat(unknown.statusCode()).isEqualTo(404);
+    assertThat(unknown.body())
+        .contains("There is no workflow with ID &quot;no-such-workflow&quot;.");
+
+    HttpResponse<String> script = get("/workflows/%3Cscript%3E");
+    assertThat(script.statusCode()).isEqualTo(404);
+    assertThat(script.body()).contains("&lt;script&gt;").doesNotContain("<script>");
+
+    assertThat(get("/workflows/").statusCode()).isEqualTo(404);
+    assertThat(get("/workflows/order-1/history").statusCode()).isEqualTo(404);
+  }
+
   private static String card(String alarm, String href, long count, String label) {
     return "<a class=\"card"
         + alarm
@@ -306,7 +396,17 @@ class DashboardIT {
 
   private static List<String> ids(String html) {
     Matcher matcher = ID_CELL.matcher(html);
-    return matcher.results().map(result -> result.group(1)).toList();
+    return matcher.results().map(result -> result.group(2)).toList();
+  }
+
+  private static String hrefOf(String html, String escapedId) {
+    return ID_CELL
+        .matcher(html)
+        .results()
+        .filter(result -> result.group(2).equals(escapedId))
+        .map(result -> result.group(1))
+        .findFirst()
+        .orElseThrow();
   }
 
   private static HttpResponse<String> get(String path) throws Exception {

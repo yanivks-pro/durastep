@@ -1,7 +1,7 @@
 # Durastep Dashboard
 
-A read-only web view of the workflows in a Durastep database: what runs, what is blocked, what waits, and a
-list to search and filter. It only shows; to change a workflow, use the [CLI](../durastep-cli/README.md).
+A read-only web view of the workflows in a Durastep database: what runs, what is blocked, what waits, a list
+to search and filter, and a page per workflow with its steps over time. It only shows; to change a workflow, use the [CLI](../durastep-cli/README.md).
 
 ## Start it from the CLI
 
@@ -36,6 +36,12 @@ try (DurastepDashboard dashboard = DurastepDashboard.start(engine.client(), 8099
 - **Overview** (`/`): workflows by state, blocked workflows, waiting work and its age. Reloads every 5 seconds.
 - **Workflows** (`/workflows`): the newest 100 workflows that match the filters: ID prefix, type, state and
   blocked. Every filter is in the address, so a filtered view can be bookmarked or shared.
+- **A workflow** (`/workflows/<id>`): its summary, why it is blocked and how to retry it, a chart of its steps
+  over time (completed, failed, timed out, running, or stopped when the workflow ended), and its history in plain
+  words. Pages of running workflows reload every 5 seconds.
+
+Pages never show workflow data: no inputs, arguments or results, only IDs, names, statuses, times and error
+messages.
 
 ## Safety
 
