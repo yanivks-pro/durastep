@@ -7,7 +7,10 @@ make bench                                    # everything, about 3 minutes
 make bench-throughput ARGS="--workflows 20000"
 make bench-latency ARGS="--rate 100 --seconds 120"
 make bench-scaling                            # 1, 2 and 3 engine processes, and backlog sizes; about 10 minutes
+make bench-replay                             # replay cost with JMH, about 2 minutes
 ```
+
+The results and what they mean are in [docs/benchmarks.md](../docs/benchmarks.md).
 
 Each run starts its own Postgres in a container (`postgres:16-alpine`, default settings), connects through a
 HikariCP pool and runs one engine whose activities do nothing, so the numbers are the engine's own overhead.
@@ -22,6 +25,7 @@ Results go to `target/benchmarks/results.md` and `results.json`.
 | Timers | During the latency run, sleeps of 1 to 10 seconds; lateness is the time a timer fired minus the time it was due. |
 | Scaling | The drain test with 1, 2 and 3 engines, each in its own process. The engines are warmed up on a smaller batch first, and only completions after the measured batch is queued count. |
 | Backlog | The same drain with one engine and growing backlogs, to show whether queue size matters. |
+| Replay | JMH, without a database: one full replay of a finished history of 10 to 10,000 steps. |
 
 ## Where the time goes
 

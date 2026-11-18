@@ -42,6 +42,12 @@ completed 1,000 of 1,000 · lost 0 · duplicate effects 0 · kills 100 · freeze
 zombie results rejected 110 · repeats absorbed by idempotency keys 211 · invariant violations 0
 ```
 
+**Throughput:** on a laptop, with durable commits and default Postgres settings, one engine runs **159 to 198
+three-step workflows a second** and three engines **228**; a step takes 16 ms at the median and 27 ms at the 99th
+percentile. The [benchmarks](docs/benchmarks.md) show how this was measured, which targets are not met yet and
+why, and how they found Postgres's notify lock capping three engines at 1.08 times one, and the fix that took
+them to 1.43.
+
 Focused tests prove each guarantee on its own, on every commit:
 
 - A separate process is killed with `kill -9` in the middle of a workflow, and a second process resumes it:

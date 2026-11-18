@@ -19,7 +19,9 @@ All notable changes to Durastep are recorded here. The format follows
 - Reproducible benchmarks in `durastep-benchmarks`, run with `make bench`: throughput by draining a backlog,
   step and workflow latency under an open-loop load, and timer lateness, each on its own Postgres container.
   `make bench-scaling` runs 1 to 3 engine processes and explains the results with Postgres's own statistics:
-  statement times, commits per workflow, wait events and the locks waited for.
+  statement times, commits per workflow, wait events and the locks waited for. `make bench-replay` measures
+  replay cost with JMH. `docs/benchmarks.md` reports the results against the targets, and a manual
+  `benchmarks.yml` workflow runs everything on GitHub.
 - New module `durastep-opentelemetry`: `DurastepTracing.of(openTelemetry)`. The Spring Boot starter uses it when
   an `OpenTelemetry` bean is present.
 

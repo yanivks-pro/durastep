@@ -39,6 +39,16 @@ class BenchTest {
   }
 
   @Test
+  void theReplayBenchmarkReplaysAFinishedHistoryOfTheRequestedLength() {
+    ReplayBenchmark benchmark = new ReplayBenchmark();
+    benchmark.steps = 50;
+    benchmark.buildAFinishedHistory();
+
+    assertThat(benchmark.historyOf(50)).hasSize(101);
+    assertThat(benchmark.replayTheWholeHistory()).hasSize(1);
+  }
+
+  @Test
   void aPercentileRowShowsMillisecondsWithOneDecimal() {
     assertThat(new Percentiles(1_234, 8.64, 10.8, 13.66, 23.8).row("Activity"))
         .isEqualTo("| Activity | 1,234 | 8.6 | 10.8 | 13.7 | 23.8 |");
