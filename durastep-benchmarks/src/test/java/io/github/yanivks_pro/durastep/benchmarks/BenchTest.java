@@ -28,6 +28,17 @@ class BenchTest {
   }
 
   @Test
+  void backlogSizesAreACommaSeparatedList() {
+    assertThat(Bench.backlogSizes("2000, 5000,10000")).containsExactly(2_000, 5_000, 10_000);
+  }
+
+  @Test
+  void longStatementsAreShortenedForTheReport() {
+    assertThat(PostgresStats.shorten("  SELECT 1  ")).isEqualTo("SELECT 1");
+    assertThat(PostgresStats.shorten("x".repeat(200))).hasSize(90).endsWith("…");
+  }
+
+  @Test
   void aPercentileRowShowsMillisecondsWithOneDecimal() {
     assertThat(new Percentiles(1_234, 8.64, 10.8, 13.66, 23.8).row("Activity"))
         .isEqualTo("| Activity | 1,234 | 8.6 | 10.8 | 13.7 | 23.8 |");

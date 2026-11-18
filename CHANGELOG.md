@@ -18,6 +18,8 @@ All notable changes to Durastep are recorded here. The format follows
   hook, `WorkflowTracing`, set with `DurastepEngine.Builder.tracing(...)` and `DurastepClient.withTracing(...)`.
 - Reproducible benchmarks in `durastep-benchmarks`, run with `make bench`: throughput by draining a backlog,
   step and workflow latency under an open-loop load, and timer lateness, each on its own Postgres container.
+  `make bench-scaling` runs 1 to 3 engine processes and explains the results with Postgres's own statistics:
+  statement times, commits per workflow, wait events and the locks waited for.
 - New module `durastep-opentelemetry`: `DurastepTracing.of(openTelemetry)`. The Spring Boot starter uses it when
   an `OpenTelemetry` bean is present.
 

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
@@ -51,6 +52,99 @@ final class Report {
         .append(result.timerLateness().row("Timer: fired after it was due"))
         .append('\n');
     json.put("latency", result);
+  }
+
+  void scaling(List<ScalingRun.Result> results) {
+    double base = results.getFirst().perSecond();
+    markdown
+        .append("\n## Scaling (drain test, one engine per process)\n\n")
+        .append(
+            "| Engines | Workflows/s | Speed-up | Commits per workflow | Postgres CPU | Engine CPU"
+                + " (cores) |\n|---|---|---|---|---|---|\n");
+    for (ScalingRun.Result result : results) {
+      markdown.append(
+          "| %d | %.0f | %.2f× | %.1f | %.0f%% | %.2f |\n"
+              .formatted(
+                  result.engines(),
+                  result.perSecond(),
+                  result.perSecond() / base,
+                  result.commitsPerWorkflow(),
+                  result.postgresCpuPercent(),
+                  result.engineCpuCores()));
+    }
+    for (ScalingRun.Result result : results) {
+      markdown
+          .append("\n### ")
+          .append(result.engines())
+          .append(result.engines() == 1 ? " engine" : " engines")
+          .append("\n\nWhat busy Postgres connections were doing (")
+          .append(result.waitSamples())
+          .append(" samples, every 100 ms):\n\n| State | Share |\n|---|---|\n");
+      long total = result.waits().values().stream().mapToLong(Long::longValue).sum();
+      result
+          .waits()
+          .forEach(
+              (state, count) ->
+                  markdown.append(
+                      "| %s | %.0f%% |\n".formatted(state, 100.0 * count / Math.max(1, total))));
+      if (!result.lockWaits().isEmpty()) {
+        markdown.append(
+            """
+
+            Locks they were waiting for (sum over samples):
+
+            | Lock | Waiting |
+            |---|---|
+            """);
+        result
+            .lockWaits()
+            .forEach((lock, count) -> markdown.append("| %s | %,d |\n".formatted(lock, count)));
+      }
+      markdown.append(
+          """
+
+          Statements by total time:
+
+          | Statement | Calls | Mean ms | Total ms |
+          |---|---|---|---|
+          """);
+      for (PostgresStats.QueryStat statement : result.topStatements()) {
+        markdown.append(
+            "| `%s` | %,d | %.2f | %,.0f |\n"
+                .formatted(
+                    statement.query().replace("|", "\\|"),
+                    statement.calls(),
+                    statement.meanMillis(),
+                    statement.totalMillis()));
+      }
+    }
+    json.put("scaling", results);
+  }
+
+  void backlog(List<ScalingRun.Result> results) {
+    markdown
+        .append("\n## Backlog size (drain test, one engine)\n\n")
+        .append(
+            """
+            | Workflows queued | Workflows/s | Claim query mean ms | Dead rows in tasks after |
+            |---|---|---|---|
+            """);
+    for (ScalingRun.Result result : results) {
+      double claim =
+          result.topStatements().stream()
+              .filter(statement -> statement.query().startsWith("WITH due AS"))
+              .mapToDouble(PostgresStats.QueryStat::meanMillis)
+              .max()
+              .orElse(0);
+      markdown.append(
+          "| %,d | %.0f | %.2f | %,d |\n"
+              .formatted(
+                  result.workflows(),
+                  result.perSecond(),
+                  claim,
+                  result.deadRows().getOrDefault("tasks", 0L)));
+    }
+    json.put("backlog", results);
   }
 
   String markdown() {
