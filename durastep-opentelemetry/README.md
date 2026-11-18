@@ -19,7 +19,7 @@ POST /orders
 <dependency>
   <groupId>io.github.yanivks-pro</groupId>
   <artifactId>durastep-opentelemetry</artifactId>
-  <version>0.7.0</version>
+  <version>1.0.0</version>
 </dependency>
 ```
 

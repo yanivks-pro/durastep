@@ -20,7 +20,7 @@ Pick histories that cover the paths your workflow takes, including ones that are
 <dependency>
   <groupId>io.github.yanivks-pro</groupId>
   <artifactId>durastep-testkit</artifactId>
-  <version>0.6.0</version>
+  <version>1.0.0</version>
   <scope>test</scope>
 </dependency>
 ```

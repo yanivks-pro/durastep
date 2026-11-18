@@ -17,10 +17,9 @@ Durastep lets you write the whole process as ordinary Java. It records every ste
 failure, carries on exactly where it stopped, without repeating the steps that already succeeded. It is a
 library, not a server: one dependency and the Postgres you already run.
 
-> **v0.6: safe to change.** Deploy new workflow code while workflows are running, check it against saved
-> histories in CI first, and encrypt workflow data before it reaches the database. All on top of an engine you can
-> operate and that survives chaos. It is not ready for production yet: see [Limits](#limits) and the
-> [roadmap](#roadmap).
+> **v1.0: complete, with a stable API.** Durable workflows that survive crashes and frozen engines, can be
+> operated, traced and changed safely, and are measured and documented. Built and tested to production
+> standards, but young: read the [Limits](#limits) before you rely on it.
 
 ![demo/chaos.sh kills and freezes engines while workflows run, then reports nothing lost and nothing done twice](docs/media/chaos.gif)
 
@@ -200,7 +199,7 @@ Durastep deliberately does not try to be:
 | M4 Interaction (v0.4) | Signals, cancellation, sagas, parallel steps and runnable examples | ✅ Done |
 | M5 Operability (v0.5) | CLI, metrics and Grafana, operator commands, retention, Spring Boot starter | ✅ Done |
 | M6 Safe evolution (v0.6) | Versioning, replay testing of new code, property tests, payload encryption | ✅ Done |
-| M7 Showcase (v1.0) | Dashboard, tracing, benchmarks, one-command demo, recordings, complete documentation | 🚧 In progress |
+| M7 Showcase (v1.0) | Dashboard, tracing, benchmarks, one-command demo, recordings, complete documentation | ✅ Done |
 
 ## Learn more
 
