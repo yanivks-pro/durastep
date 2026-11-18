@@ -22,10 +22,18 @@ All notable changes to Durastep are recorded here. The format follows
   statement times, commits per workflow, wait events and the locks waited for. `make bench-replay` measures
   replay cost with JMH. `docs/benchmarks.md` reports the results against the targets, and a manual
   `benchmarks.yml` workflow runs everything on GitHub.
+- A one-command demo: `docker compose up -d --wait` builds Durastep and starts Postgres, three engines, a load of
+  example workflows, the dashboard, Prometheus and Grafana. `demo/chaos.sh` kills and freezes engines, then
+  reports workflows lost, effects repeated, zombie results rejected and repeats absorbed by idempotency keys;
+  CI runs both.
 - New module `durastep-opentelemetry`: `DurastepTracing.of(openTelemetry)`. The Spring Boot starter uses it when
   an `OpenTelemetry` bean is present.
 
 ### Changed
+
+- Prometheus and Grafana are part of `docker compose up` instead of the `observability` profile, and every port
+  the compose file publishes listens on this machine only. The Grafana dashboard takes the largest value of the
+  database-wide gauges, so several engines no longer add up the same count.
 
 - Engines are woken after a transaction commits, in a short transaction of their own, instead of inside it. The
   notification no longer holds Postgres's database-wide notify lock across every commit's disk write, so engines

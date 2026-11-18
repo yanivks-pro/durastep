@@ -42,3 +42,22 @@ jobs:
             durastep-core/target/site/jacoco/
             durastep-core/target/site/jacoco-it/
           if-no-files-found: ignore
+
+  demo:
+    name: demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Start the demo with one command
+        run: docker compose up -d --build --wait
+      - name: Check the dashboard and Grafana answer
+        run: |
+          curl -fsS http://127.0.0.1:8099/ | grep -q '<h1>Overview</h1>'
+          curl -fsS http://127.0.0.1:3000/api/health | grep -q '"database": *"ok"'
+      - name: Break it and check nothing was lost or done twice
+        run: demo/chaos.sh --rounds 6 --gap 3
+      - if: failure()
+        run: docker compose logs --tail 200
+      - if: always()
+        run: docker compose down -v
