@@ -427,7 +427,8 @@ cd durastep
 integration tests, including the crash, process-kill, zombie and outage tests, and fails if line coverage drops
 below 85% in any module. It also runs every [example](durastep-examples/README.md) scenario end to end, checks
 the CLI's output against recorded snapshots, and starts real Spring Boot applications. `./mvnw verify -Pchaos`
-runs the chaos test, which takes a few minutes.
+runs the chaos test, which takes a few minutes. `make bench` runs the
+[benchmarks](durastep-benchmarks/README.md) on a Postgres of their own.
 
 | Module | What it is |
 |---|---|
@@ -439,6 +440,7 @@ runs the chaos test, which takes a few minutes.
 | `durastep-cli` | The command-line tool |
 | `durastep-spring-boot-starter` | Spring Boot 4 integration |
 | `durastep-examples` | Runnable examples and the load generator; not released |
+| `durastep-benchmarks` | Reproducible benchmarks, `make bench`; not released |
 
 ## Roadmap
 
