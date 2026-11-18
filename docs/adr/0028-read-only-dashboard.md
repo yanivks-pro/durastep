@@ -18,7 +18,8 @@ A separate module, `durastep-dashboard`, serves a few server-rendered pages, and
 - **The JDK's built-in HTTP server** (`com.sun.net.httpserver`) on virtual threads, and HTML written in Java with
   one stylesheet. No web framework, no template engine, no JavaScript and no npm, so the module adds no
   dependencies beyond the core.
-- **It reads through the public client** (`DurastepClient`): `list`, `stats` and two small additions,
+- **It reads through the public client** (`DurastepClient`): `list`, `stats`, a workflow's `history()` and
+  `blockedError()`, and two small additions,
   `countByState()` and `WorkflowQuery.idStartsWith(...)`. It never writes SQL of its own, so the CLI, the
   dashboard and applications see the same data the same way.
 - **Read-only.** Pages answer `GET` and `HEAD`; everything else is refused. All actions stay in the CLI, which
@@ -27,6 +28,12 @@ A separate module, `durastep-dashboard`, serves a few server-rendered pages, and
   Every piece of text from a workflow or from the address bar is HTML-escaped; a strict Content Security Policy
   forbids scripts, inline styles, frames and forms that post elsewhere. A database error shows a plain message,
   with the details only in the log.
+- **One timeline for the CLI and the dashboard.** The plain-words description of each history event, and the
+  steps with their start, end and outcome, are worked out once in the core and used by both, so `durastep show`
+  and the workflow page never disagree. A signal wait whose deadline passes is shown as timed out, not
+  completed.
+- **No workflow data on the pages.** Pages show IDs, names, statuses, times and error messages, never inputs,
+  arguments or results, the same rule the logs follow ([security guide](../security.md)).
 - **Started from the CLI or embedded:** `durastep dashboard` uses the CLI's connection settings;
   `DurastepDashboard.start(client, port)` runs it inside an application.
 
@@ -47,4 +54,5 @@ A separate module, `durastep-dashboard`, serves a few server-rendered pages, and
   statuses that contain HTML, filters that do, a database that refuses the connection and a port already in
   use.
 - **Negative:** no login, so the dashboard must stay on the loopback address or behind something that adds one.
-  Lists show at most the newest 100 matches, with no paging. Pages refresh by reloading, not live.
+  Lists show at most the newest 100 matches, with no paging; a workflow page shows its first 200
+  steps and 1,000 events. Pages refresh by reloading, not live.

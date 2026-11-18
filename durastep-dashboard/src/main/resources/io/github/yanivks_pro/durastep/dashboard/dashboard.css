@@ -244,6 +244,97 @@ button {
   color: var(--muted);
 }
 
+.problem {
+  margin-top: 24px;
+  padding: 4px 16px 8px;
+  background: var(--surface);
+  border: 1px solid var(--bad);
+  border-radius: 8px;
+}
+
+.problem h2 {
+  margin-top: 12px;
+  color: var(--bad);
+}
+
+pre {
+  overflow-x: auto;
+  padding: 12px;
+  background: var(--bg);
+  border-radius: 6px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+td.wrap {
+  white-space: normal;
+}
+
+.gantt {
+  display: block;
+  width: 100%;
+  min-width: 900px;
+  height: auto;
+  background: var(--surface);
+}
+
+.gantt text {
+  fill: var(--text);
+  font-size: 12px;
+}
+
+.gantt text.axis {
+  fill: var(--muted);
+}
+
+.gantt .track {
+  stroke: var(--line);
+}
+
+.bar.completed,
+.swatch.completed {
+  fill: var(--ok);
+  background: var(--ok);
+}
+
+.bar.failed,
+.swatch.failed {
+  fill: var(--bad);
+  background: var(--bad);
+}
+
+.bar.timed_out,
+.swatch.timed_out {
+  fill: var(--warn);
+  background: var(--warn);
+}
+
+.bar.running,
+.swatch.running {
+  fill: var(--accent);
+  background: var(--accent);
+}
+
+.bar.stopped,
+.swatch.stopped {
+  fill: var(--muted);
+  background: var(--muted);
+}
+
+.legend {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin: 0 4px 0 8px;
+  border-radius: 2px;
+}
+
 footer {
   max-width: 1200px;
   margin: 0 auto;

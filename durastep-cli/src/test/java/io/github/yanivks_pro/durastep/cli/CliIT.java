@@ -320,7 +320,9 @@ class CliIT {
     assertThat(address.getHost()).isEqualTo("127.0.0.1");
     HttpResponse<String> page = get(address.resolve("/workflows"));
     assertThat(page.statusCode()).isEqualTo(200);
-    assertThat(page.body()).contains("<td class=\"id\">order-1</td>");
+    assertThat(page.body())
+        .contains("<td class=\"id\"><a href=\"/workflows/order-1\">order-1</a></td>");
+    assertThat(get(address.resolve("/workflows/order-1")).body()).contains("<h1>order-1</h1>");
     assertThat(dashboard.err().toString()).isEmpty();
 
     assertThat(dashboard.stop()).isZero();

@@ -209,7 +209,8 @@ in the workflow's history; the same commands exist on the client: `retryNow`, `t
 `rerun`.
 
 To look rather than ask, `durastep dashboard` serves a read-only [dashboard](durastep-dashboard/README.md) on
-`http://127.0.0.1:8099/`: workflows by state, blocked workflows, waiting work, and a list to search and filter.
+`http://127.0.0.1:8099/`: workflows by state, blocked workflows, waiting work, a list to search and filter, and a
+page per workflow with a chart of its steps and its history.
 
 To watch it, start Prometheus and Grafana with the load generator from the examples:
 
