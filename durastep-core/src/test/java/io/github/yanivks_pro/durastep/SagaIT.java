@@ -66,7 +66,7 @@ class SagaIT {
   void aProcessKilledWhileUndoingATripIsReplacedAndEveryBookingIsUndoneExactlyOnce()
       throws Exception {
     Process first = launch(TripApp.HANG_WHILE_CANCELLING_HOTEL, "first");
-    await().atMost(Duration.ofSeconds(60)).until(() -> exists("durastep.tasks"));
+    await().atMost(Duration.ofSeconds(60)).until(() -> TestPostgres.fullyMigrated(dataSource));
     DurastepClient client = DurastepEngine.builder().dataSource(dataSource).build().client();
     client.start(TripApp.TripWorkflow.class, "trip-1", "trip-1");
     await().atMost(Duration.ofSeconds(30)).until(() -> activities().contains("cancelHotel"));
@@ -133,15 +133,6 @@ class SagaIT {
       }
     }
     return values;
-  }
-
-  private static boolean exists(String table) throws SQLException {
-    try (Connection connection = dataSource.getConnection();
-        Statement statement = connection.createStatement();
-        ResultSet row = statement.executeQuery("SELECT to_regclass('" + table + "') IS NOT NULL")) {
-      row.next();
-      return row.getBoolean(1);
-    }
   }
 
   private static int count(String from) throws SQLException {

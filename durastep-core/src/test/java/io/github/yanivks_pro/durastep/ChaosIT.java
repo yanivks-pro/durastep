@@ -89,7 +89,7 @@ class ChaosIT {
     for (int i = 0; i < INSTANCES; i++) {
       instances.add(launch(i, generations[i]++));
     }
-    await().atMost(Duration.ofSeconds(60)).until(() -> exists("durastep.tasks"));
+    await().atMost(Duration.ofSeconds(60)).until(() -> TestPostgres.fullyMigrated(dataSource));
     DurastepClient client = DurastepEngine.builder().dataSource(dataSource).build().client();
 
     int events = (int) Math.ceil(KILLS / 0.9);
@@ -248,15 +248,6 @@ class ChaosIT {
   private static void signal(String signal, Process process) throws Exception {
     Process kill = new ProcessBuilder("kill", "-" + signal, Long.toString(process.pid())).start();
     kill.waitFor(10, TimeUnit.SECONDS);
-  }
-
-  private static boolean exists(String table) throws SQLException {
-    try (Connection connection = dataSource.getConnection();
-        Statement statement = connection.createStatement();
-        ResultSet row = statement.executeQuery("SELECT to_regclass('" + table + "') IS NOT NULL")) {
-      row.next();
-      return row.getBoolean(1);
-    }
   }
 
   private static int count(String from) throws SQLException {

@@ -61,7 +61,7 @@ class ZombieIT {
   @Test
   void aFrozenWorkerLosesItsTaskAndItsResultIsRejectedWhenItWakesUp() throws Exception {
     Process first = launch("first");
-    await().atMost(Duration.ofSeconds(60)).until(() -> exists("durastep.tasks"));
+    await().atMost(Duration.ofSeconds(60)).until(() -> TestPostgres.fullyMigrated(dataSource));
     DurastepEngine client = DurastepEngine.builder().dataSource(dataSource).build();
     client.client().start(ZombieApp.ChargeWorkflow.class, "order-7", "order-7");
     await().atMost(Duration.ofSeconds(30)).until(() -> calls().contains("started " + first.pid()));
@@ -125,15 +125,6 @@ class ZombieIT {
       }
     }
     return calls;
-  }
-
-  private static boolean exists(String table) throws SQLException {
-    try (Connection connection = dataSource.getConnection();
-        Statement statement = connection.createStatement();
-        ResultSet row = statement.executeQuery("SELECT to_regclass('" + table + "') IS NOT NULL")) {
-      row.next();
-      return row.getBoolean(1);
-    }
   }
 
   private static int count(String from) throws SQLException {
