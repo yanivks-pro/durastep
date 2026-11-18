@@ -18,8 +18,10 @@ class HtmlTest {
 
   @Test
   void durationsAreShownInTheTwoLargestUnits() {
-    assertThat(Html.duration(Duration.ZERO)).isEqualTo("0 s");
-    assertThat(Html.duration(Duration.ofMillis(-5))).isEqualTo("0 s");
+    assertThat(Html.duration(Duration.ZERO)).isEqualTo("0 ms");
+    assertThat(Html.duration(Duration.ofMillis(-5))).isEqualTo("0 ms");
+    assertThat(Html.duration(Duration.ofMillis(870))).isEqualTo("870 ms");
+    assertThat(Html.duration(Duration.ofMillis(1_999))).isEqualTo("1 s");
     assertThat(Html.duration(Duration.ofSeconds(59))).isEqualTo("59 s");
     assertThat(Html.duration(Duration.ofSeconds(125))).isEqualTo("2 min 5 s");
     assertThat(Html.duration(Duration.ofMinutes(64))).isEqualTo("1 h 4 min");

@@ -46,7 +46,11 @@ final class Html {
   }
 
   static String duration(Duration duration) {
-    long seconds = Math.max(0, duration.toSeconds());
+    long millis = Math.max(0, duration.toMillis());
+    if (millis < 1_000) {
+      return millis + " ms";
+    }
+    long seconds = millis / 1_000;
     if (seconds < 60) {
       return seconds + " s";
     }

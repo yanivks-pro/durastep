@@ -3,6 +3,10 @@
 Find, inspect and fix workflows from the command line. The CLI talks straight to the database, so it works
 whether or not your application is running.
 
+![A CLI session against the demo: stats, the newest workflows, a trip that undid its bookings, a report and its history](../docs/media/cli.gif)
+
+The session is also an [asciinema recording](../docs/media/cli.cast): `asciinema play docs/media/cli.cast`.
+
 ```bash
 ./mvnw -q install -Dmaven.test.skip=true
 alias durastep='java -jar durastep-cli/target/durastep-cli-0.6.0.jar'
