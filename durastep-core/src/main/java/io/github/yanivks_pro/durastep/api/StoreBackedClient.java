@@ -5,6 +5,7 @@ import io.github.yanivks_pro.durastep.runtime.WorkflowTypes;
 import io.github.yanivks_pro.durastep.store.JdbcWorkflowStore;
 import io.github.yanivks_pro.durastep.store.StartResult;
 import io.github.yanivks_pro.durastep.store.StoredWorkflow;
+import io.github.yanivks_pro.durastep.worker.SafeWorkflowTracing;
 import java.lang.reflect.Type;
 import java.time.Duration;
 import java.util.List;
@@ -22,6 +23,7 @@ final class StoreBackedClient implements DurastepClient {
   private final Duration pollInterval;
   private final String operator;
   private final EngineListener listener;
+  private final WorkflowTracing tracing;
 
   StoreBackedClient(JdbcWorkflowStore store, PayloadConverter converter, Duration pollInterval) {
     this(store, converter, pollInterval, EngineListener.NONE);
@@ -32,7 +34,13 @@ final class StoreBackedClient implements DurastepClient {
       PayloadConverter converter,
       Duration pollInterval,
       EngineListener listener) {
-    this(store, converter, pollInterval, System.getProperty("user.name", "unknown"), listener);
+    this(
+        store,
+        converter,
+        pollInterval,
+        System.getProperty("user.name", "unknown"),
+        listener,
+        WorkflowTracing.NONE);
   }
 
   private StoreBackedClient(
@@ -40,12 +48,14 @@ final class StoreBackedClient implements DurastepClient {
       PayloadConverter converter,
       Duration pollInterval,
       String operator,
-      EngineListener listener) {
+      EngineListener listener,
+      WorkflowTracing tracing) {
     this.store = store;
     this.converter = converter;
     this.pollInterval = pollInterval;
     this.operator = operator;
     this.listener = listener;
+    this.tracing = tracing;
   }
 
   @Override
@@ -64,7 +74,14 @@ final class StoreBackedClient implements DurastepClient {
     if (operator.isBlank()) {
       throw new IllegalArgumentException("the operator's name must not be blank");
     }
-    return new StoreBackedClient(store, converter, pollInterval, operator, listener);
+    return new StoreBackedClient(store, converter, pollInterval, operator, listener, tracing);
+  }
+
+  @Override
+  public DurastepClient withTracing(WorkflowTracing tracing) {
+    Objects.requireNonNull(tracing, "tracing");
+    return new StoreBackedClient(
+        store, converter, pollInterval, operator, listener, SafeWorkflowTracing.around(tracing));
   }
 
   @Override
@@ -131,7 +148,12 @@ final class StoreBackedClient implements DurastepClient {
     requireValidId(workflowId);
     String type = WorkflowTypes.nameOf(workflowClass);
     StartResult started =
-        store.start(workflowId, type, converter.toPayload(input), options.timeout());
+        store.start(
+            workflowId,
+            type,
+            converter.toPayload(input),
+            options.timeout(),
+            tracing.capture(workflowId, type));
     if (!started.type().equals(type)) {
       throw new IllegalArgumentException(
           "workflow " + workflowId + " already exists as " + started.type() + ", not " + type);

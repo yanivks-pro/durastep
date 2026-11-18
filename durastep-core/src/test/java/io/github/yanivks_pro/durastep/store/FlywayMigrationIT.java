@@ -34,7 +34,7 @@ class FlywayMigrationIT {
             .schemas("durastep")
             .locations("classpath:durastep/db/migration")
             .load();
-    assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
+    assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
   }
 
   @AfterAll
@@ -47,6 +47,41 @@ class FlywayMigrationIT {
     assertThat(tablesIn("durastep"))
         .containsExactlyInAnyOrder(
             "workflows", "history_events", "tasks", "timers", "inbox", "flyway_schema_history");
+  }
+
+  @Test
+  void aVersionOneDatabaseWithWorkflowsUpgradesWithoutTraceContext() throws SQLException {
+    Flyway versionOne =
+        Flyway.configure()
+            .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+            .schemas("upgrade")
+            .locations("classpath:durastep/db/migration")
+            .target("1")
+            .load();
+    assertThat(versionOne.migrate().migrationsExecuted).isEqualTo(1);
+    try (Connection connection = connect();
+        Statement statement = connection.createStatement()) {
+      statement.execute(
+          "INSERT INTO upgrade.workflows (id, type, state) VALUES ('old-1', 'Order', 'RUNNING')");
+    }
+
+    Flyway latest =
+        Flyway.configure()
+            .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+            .schemas("upgrade")
+            .locations("classpath:durastep/db/migration")
+            .load();
+    assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+
+    try (Connection connection = connect();
+        Statement statement = connection.createStatement();
+        ResultSet row =
+            statement.executeQuery(
+                "SELECT state, trace_context FROM upgrade.workflows WHERE id = 'old-1'")) {
+      assertThat(row.next()).isTrue();
+      assertThat(row.getString(1)).isEqualTo("RUNNING");
+      assertThat(row.getString(2)).isNull();
+    }
   }
 
   @Test

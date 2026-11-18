@@ -5,8 +5,11 @@ import io.github.yanivks_pro.durastep.api.DurastepEngine;
 import io.github.yanivks_pro.durastep.api.EngineListener;
 import io.github.yanivks_pro.durastep.api.PayloadCodec;
 import io.github.yanivks_pro.durastep.api.Workflow;
+import io.github.yanivks_pro.durastep.api.WorkflowTracing;
 import io.github.yanivks_pro.durastep.micrometer.DurastepMetrics;
+import io.github.yanivks_pro.durastep.opentelemetry.DurastepTracing;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.opentelemetry.api.OpenTelemetry;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -19,6 +22,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -31,7 +35,8 @@ import org.springframework.util.ClassUtils;
       "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
       "org.springframework.boot.micrometer.metrics.autoconfigure.MetricsAutoConfiguration",
       "org.springframework.boot.micrometer.metrics.autoconfigure.CompositeMeterRegistryAutoConfiguration",
-      "org.springframework.boot.micrometer.metrics.autoconfigure.export.simple.SimpleMetricsExportAutoConfiguration"
+      "org.springframework.boot.micrometer.metrics.autoconfigure.export.simple.SimpleMetricsExportAutoConfiguration",
+      "org.springframework.boot.opentelemetry.autoconfigure.OpenTelemetrySdkAutoConfiguration"
     })
 @ConditionalOnBean(DataSource.class)
 @EnableConfigurationProperties(DurastepProperties.class)
@@ -44,7 +49,8 @@ public final class DurastepAutoConfiguration {
       DurastepProperties properties,
       ApplicationContext context,
       ObjectProvider<EngineListener> listeners,
-      ObjectProvider<PayloadCodec> codec) {
+      ObjectProvider<PayloadCodec> codec,
+      ObjectProvider<WorkflowTracing> tracing) {
     DurastepEngine.Builder builder =
         DurastepEngine.builder()
             .dataSource(dataSource)
@@ -60,6 +66,7 @@ public final class DurastepAutoConfiguration {
             .listener(CompositeEngineListener.of(listeners.orderedStream().toList()));
     properties.retentionPeriod().ifPresentOrElse(builder::retention, builder::noRetention);
     codec.ifAvailable(builder::payloadCodec);
+    tracing.ifAvailable(builder::tracing);
     registerWorkflows(builder, context);
     registerActivities(builder, context);
     return builder.build();
@@ -70,15 +77,19 @@ public final class DurastepAutoConfiguration {
       ObjectProvider<DurastepEngine> engine,
       DataSource dataSource,
       DurastepProperties properties,
-      ObjectProvider<PayloadCodec> codec) {
+      ObjectProvider<PayloadCodec> codec,
+      ObjectProvider<WorkflowTracing> tracing) {
     DurastepEngine running = engine.getIfAvailable();
     if (running != null) {
       return running.client();
     }
     PayloadCodec found = codec.getIfAvailable();
-    return found != null
-        ? DurastepClient.connect(dataSource, properties.schema(), found)
-        : DurastepClient.connect(dataSource, properties.schema());
+    DurastepClient client =
+        found != null
+            ? DurastepClient.connect(dataSource, properties.schema(), found)
+            : DurastepClient.connect(dataSource, properties.schema());
+    WorkflowTracing traced = tracing.getIfAvailable();
+    return traced != null ? client.withTracing(traced) : client;
   }
 
   @Bean
@@ -113,6 +124,17 @@ public final class DurastepAutoConfiguration {
     @Bean
     MetricsWatcher durastepMetricsWatcher(DurastepMetrics metrics) {
       return new MetricsWatcher(metrics::watch);
+    }
+  }
+
+  @Configuration(proxyBeanMethods = false)
+  @ConditionalOnClass({DurastepTracing.class, OpenTelemetry.class})
+  @ConditionalOnBean(OpenTelemetry.class)
+  static final class Tracing {
+    @Bean
+    @ConditionalOnMissingBean
+    WorkflowTracing durastepTracing(OpenTelemetry openTelemetry) {
+      return DurastepTracing.of(openTelemetry);
     }
   }
 

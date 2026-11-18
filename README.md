@@ -208,6 +208,9 @@ Every command can print JSON. Commands that change workflows ask for confirmatio
 in the workflow's history; the same commands exist on the client: `retryNow`, `terminate`, `retryAllBlocked` and
 `rerun`.
 
+To follow one workflow through the rest of your system, [`durastep-opentelemetry`](durastep-opentelemetry/README.md)
+puts its activity attempts, timers, signals and end into the trace of the request that started it.
+
 To look rather than ask, `durastep dashboard` serves a read-only [dashboard](durastep-dashboard/README.md) on
 `http://127.0.0.1:8099/`: workflows by state, blocked workflows, waiting work, a list to search and filter, and a
 page per workflow with a chart of its steps and its history.
@@ -237,7 +240,8 @@ class ShopActivities implements Payments, Warehouse { … }      // registered f
 ```
 
 The engine uses the application's `DataSource`, stops during Spring's graceful shutdown, reports to
-`/actuator/health`, and records its metrics when a `MeterRegistry` is present.
+`/actuator/health`, records its metrics when a `MeterRegistry` is present, and traces workflows when an
+`OpenTelemetry` bean and [`durastep-opentelemetry`](durastep-opentelemetry/README.md) are present.
 
 ## Change it safely
 
@@ -396,6 +400,9 @@ Every significant decision is recorded as an [Architecture Decision Record](docs
 - **A read-only dashboard without a web framework.** The JDK's own HTTP server and HTML written in Java, with no
   JavaScript; it reads through the public client and cannot change anything.
   [ADR-0028](docs/adr/0028-read-only-dashboard.md)
+- **One trace per workflow.** The caller's trace context is stored with the workflow, so every attempt, timer
+  and signal joins the request that started it, on any engine and days later; the core has no tracing
+  dependency. [ADR-0030](docs/adr/0030-one-trace-per-workflow.md)
 - **A Spring Boot starter in its own module.** Spring's dependency versions stay out of the core and the other
   modules. [ADR-0025](docs/adr/0025-spring-boot-starter-module.md)
 - **Versioning with markers in the history.** A version check records its answer without becoming a step, so
@@ -428,6 +435,7 @@ runs the chaos test, which takes a few minutes.
 | `durastep-testkit` | `WorkflowReplayer` for testing new code against saved histories |
 | `durastep-micrometer` | Micrometer metrics |
 | `durastep-dashboard` | A read-only web dashboard |
+| `durastep-opentelemetry` | One OpenTelemetry trace per workflow |
 | `durastep-cli` | The command-line tool |
 | `durastep-spring-boot-starter` | Spring Boot 4 integration |
 | `durastep-examples` | Runnable examples and the load generator; not released |

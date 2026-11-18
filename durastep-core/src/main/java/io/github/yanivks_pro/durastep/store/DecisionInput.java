@@ -3,11 +3,16 @@ package io.github.yanivks_pro.durastep.store;
 import io.github.yanivks_pro.durastep.runtime.HistoryEntry;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public record DecisionInput(
-    String workflowType, List<HistoryEntry> history, List<InboxEntry> inbox) {
+    String workflowType,
+    Map<String, String> traceContext,
+    List<HistoryEntry> history,
+    List<InboxEntry> inbox) {
 
   public DecisionInput {
+    traceContext = Map.copyOf(traceContext);
     history = List.copyOf(history);
     inbox = List.copyOf(inbox);
   }

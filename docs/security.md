@@ -12,6 +12,7 @@ that passes through it. This guide covers what that data is, who can read it, an
 | Statuses set with `ctx.setStatus(...)` | `workflows` | Always |
 | Error types and messages of failed activities and blocked workflows | `history_events`, `workflows`, `tasks` | Always |
 | Who ran an operator command and why | `history_events` | Always |
+| The trace context of the code that started a workflow, with [tracing](../durastep-opentelemetry/README.md) on | `workflows` | Always; trace and span IDs only |
 
 Finished workflows are deleted after the retention period, 30 days by default.
 
