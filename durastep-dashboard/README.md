@@ -24,7 +24,7 @@ machines, and the CLI warns that it has no login.
 <dependency>
   <groupId>io.github.yanivks-pro</groupId>
   <artifactId>durastep-dashboard</artifactId>
-  <version>0.7.0</version>
+  <version>1.0.0</version>
 </dependency>
 ```
 

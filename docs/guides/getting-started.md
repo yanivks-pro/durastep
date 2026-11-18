@@ -16,7 +16,7 @@ cd durastep && ./mvnw -q install -Dmaven.test.skip=true
 <dependency>
   <groupId>io.github.yanivks-pro</groupId>
   <artifactId>durastep-core</artifactId>
-  <version>0.7.0-SNAPSHOT</version>
+  <version>1.0.0</version>
 </dependency>
 ```
 

@@ -4,7 +4,12 @@ All notable changes to Durastep are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.0] - 2026-11-18
+
+Durastep 1.0: durable workflows for Java on Postgres, now with a stable public API. This release adds a
+read-only dashboard, one OpenTelemetry trace per workflow, reproducible benchmarks that found and fixed the
+engine's biggest bottleneck, a one-command demo with a chaos script, recordings, an architecture document and
+guides, and checks that keep the README's quickstart and the public API's Javadoc honest.
 
 ### Added
 
