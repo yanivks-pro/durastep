@@ -23,7 +23,8 @@ Every port listens on this machine only. The CLI works against the demo too: `du
 
 ## What the chaos script does
 
-`demo/chaos.sh` runs 20 rounds, 4 seconds apart; `--rounds` and `--gap` change that. Each round picks a random
+`demo/chaos.sh` runs 20 rounds, 4 seconds apart; `--rounds` and `--gap` change that, and `--seed` repeats the
+same sequence of kills and freezes on the same version of bash. Each round picks a random
 engine and either kills it with `kill -9`, restarting it a few seconds later, or freezes it for 8 seconds. A
 frozen engine is a zombie: its leases expire, another engine takes over its work, and when it wakes up, its
 late result is rejected. Then the script stops the load, waits for every workflow started during the chaos to
@@ -56,3 +57,10 @@ Durastep chaos report
   effect; the fencing check rejects what is left.
 
 The script exits with an error if anything was lost or done twice, which is how CI uses it.
+
+## Recording
+
+`demo/record.sh` regenerates every recording and screenshot in `docs/media`: it starts the demo, records
+`demo/chaos.sh --rounds 10 --gap 3 --seed 6` and a CLI session with [asciinema](https://asciinema.org), turns them
+into GIFs with [agg](https://github.com/asciinema/agg), and photographs the dashboard when Chrome is installed.
+It needs `asciinema`, `agg` and `jq`; on a Mac, `brew install asciinema agg jq`.

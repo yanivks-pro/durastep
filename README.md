@@ -13,6 +13,12 @@ as intended.
 > operate and that survives chaos: in a test that kills engines at random, nothing is lost and nothing is done
 > twice. It is not ready for production yet: see [Limits of v0.6](#limits-of-v06) and the [roadmap](#roadmap).
 
+![demo/chaos.sh kills and freezes engines while workflows run, then reports nothing lost and nothing done twice](docs/media/chaos.gif)
+
+*The [one-command demo](#try-it-in-one-command) under `demo/chaos.sh`: three engines are killed and frozen while
+workflows keep starting, and afterwards none is lost, no effect happened twice, and late results from frozen
+engines were rejected.*
+
 ```java
 public final class OrderWorkflow implements Workflow<Order, Receipt> {
   @Override

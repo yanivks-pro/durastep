@@ -3,6 +3,10 @@
 A read-only web view of the workflows in a Durastep database: what runs, what is blocked, what waits, a list
 to search and filter, and a page per workflow with its steps over time. It only shows; to change a workflow, use the [CLI](../durastep-cli/README.md).
 
+![The overview: workflows by state, waiting work and blocked workflows](../docs/media/dashboard-overview.png)
+
+![A trip that found no car: its bookings, the failed car and the saga undoing them, over 788 ms](../docs/media/dashboard-workflow.png)
+
 ## Start it from the CLI
 
 ```bash

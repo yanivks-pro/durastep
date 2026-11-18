@@ -33,7 +33,7 @@ public final class ReportWorkflow implements Workflow<String, String> {
 
     @Override
     public String render(String reportId) {
-      for (int part = 0; part < 6; part++) {
+      for (int part = 0; part < 20; part++) {
         try {
           Thread.sleep(Duration.ofMillis(500));
         } catch (InterruptedException e) {

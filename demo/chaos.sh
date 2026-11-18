@@ -4,16 +4,21 @@ set -euo pipefail
 rounds=20
 gap=4
 freeze=8
+seed=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --rounds) rounds="$2"; shift 2 ;;
     --gap) gap="$2"; shift 2 ;;
-    *) echo "usage: demo/chaos.sh [--rounds N] [--gap SECONDS]" >&2; exit 2 ;;
+    --seed) seed="$2"; shift 2 ;;
+    *) echo "usage: demo/chaos.sh [--rounds N] [--gap SECONDS] [--seed N]" >&2; exit 2 ;;
   esac
 done
-case "$rounds$gap" in
-  *[!0-9]*|"") echo "rounds and gap must be whole numbers" >&2; exit 2 ;;
+case "$rounds$gap$seed" in
+  *[!0-9]*|"") echo "rounds, gap and seed must be whole numbers" >&2; exit 2 ;;
 esac
+if [ -n "$seed" ]; then
+  RANDOM=$seed
+fi
 
 cd "$(dirname "$0")/.."
 
