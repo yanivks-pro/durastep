@@ -21,7 +21,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 class SecurityGuideIT {
 
-  private static final Path GUIDE = Path.of("..", "docs", "security.md");
+  private static final Path GUIDE = Path.of("..", "docs", "guides", "security.md");
   private static final Duration WAIT = Duration.ofSeconds(20);
 
   interface Greetings {

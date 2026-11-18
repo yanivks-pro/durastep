@@ -33,7 +33,7 @@ A separate module, `durastep-dashboard`, serves a few server-rendered pages, and
   and the workflow page never disagree. A signal wait whose deadline passes is shown as timed out, not
   completed.
 - **No workflow data on the pages.** Pages show IDs, names, statuses, times and error messages, never inputs,
-  arguments or results, the same rule the logs follow ([security guide](../security.md)).
+  arguments or results, the same rule the logs follow ([security guide](../guides/security.md)).
 - **Started from the CLI or embedded:** `durastep dashboard` uses the CLI's connection settings;
   `DurastepDashboard.start(client, port)` runs it inside an application.
 

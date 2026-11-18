@@ -296,7 +296,7 @@ DurastepEngine.builder()
     .payloadCodec(AesGcmPayloadCodec.withKeys(Map.of("2026-11", key), "2026-11"))
 ```
 
-The [security guide](docs/security.md) covers the rest: a database user with the exact privileges Durastep needs,
+The [security guide](docs/guides/security.md) covers the rest: a database user with the exact privileges Durastep needs,
 TLS, keys and rotation, logs and retention.
 
 ## Features in v0.6
@@ -377,6 +377,16 @@ TLS, keys and rotation, logs and retention.
   testkit.
 - **Notifications do not pass through PgBouncer in transaction mode**; behind it, engines fall back to polling
   once a second.
+
+## Documentation
+
+- [Architecture](docs/architecture.md): the components, the life of a step, the data model, and how replay,
+  leases and fencing work, with diagrams.
+- Guides: [getting started](docs/guides/getting-started.md), [writing workflows](docs/guides/writing-workflows.md),
+  including the rules workflow code must follow, [operations](docs/guides/operations.md) and
+  [security](docs/guides/security.md).
+- [Benchmarks](docs/benchmarks.md), the [demo](demo/README.md) and the
+  [Architecture Decision Records](docs/adr/README.md).
 
 ## Design highlights
 

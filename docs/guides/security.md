@@ -12,7 +12,7 @@ that passes through it. This guide covers what that data is, who can read it, an
 | Statuses set with `ctx.setStatus(...)` | `workflows` | Always |
 | Error types and messages of failed activities and blocked workflows | `history_events`, `workflows`, `tasks` | Always |
 | Who ran an operator command and why | `history_events` | Always |
-| The trace context of the code that started a workflow, with [tracing](../durastep-opentelemetry/README.md) on | `workflows` | Always; trace and span IDs only |
+| The trace context of the code that started a workflow, with [tracing](../../durastep-opentelemetry/README.md) on | `workflows` | Always; trace and span IDs only |
 
 Finished workflows are deleted after the retention period, 30 days by default.
 
@@ -70,7 +70,7 @@ jdbc:postgresql://db.example.com:5432/app?sslmode=verify-full&sslrootcert=/etc/s
 ## Encrypt workflow data at rest
 
 With a payload codec, inputs, arguments, results and signals are encrypted before they leave the application,
-so they are unreadable in the database and its backups ([ADR-0027](adr/0027-pluggable-payload-encryption.md)):
+so they are unreadable in the database and its backups ([ADR-0027](../adr/0027-pluggable-payload-encryption.md)):
 
 ```java
 PayloadCodec codec = AesGcmPayloadCodec.withKeys(Map.of("2026-11", currentKey), "2026-11");
