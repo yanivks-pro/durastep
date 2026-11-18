@@ -61,3 +61,34 @@ jobs:
         run: docker compose logs --tail 200
       - if: always()
         run: docker compose down -v
+
+  quickstart:
+    name: quickstart
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Take the quickstart from the README
+        run: |
+          awk '/^## Quickstart/{q=1} q && /^```bash/{b=1; next} b && /^```/{exit} b' README.md > "$RUNNER_TEMP/quickstart.sh"
+          test -s "$RUNNER_TEMP/quickstart.sh"
+          sed -i \
+            -e "s|https://github.com/yanivks-pro/durastep.git|$GITHUB_WORKSPACE|" \
+            -e 's|^open \(.*\)$|curl -fsS --retry 10 --retry-connrefused \1 \| grep -q "<h1>Overview</h1>"|' \
+            "$RUNNER_TEMP/quickstart.sh"
+          cat "$RUNNER_TEMP/quickstart.sh"
+      - name: Run it as written in an empty folder
+        run: |
+          mkdir "$RUNNER_TEMP/fresh"
+          cd "$RUNNER_TEMP/fresh"
+          bash -euo pipefail "$RUNNER_TEMP/quickstart.sh"
+      - name: Break it as the README says
+        run: |
+          cd "$RUNNER_TEMP/fresh/durastep"
+          demo/chaos.sh --rounds 3 --gap 2
+      - if: failure()
+        working-directory: ${{ runner.temp }}/fresh/durastep
+        run: docker compose logs --tail 200
+      - if: always()
+        working-directory: ${{ runner.temp }}/fresh/durastep
+        run: docker compose down -v

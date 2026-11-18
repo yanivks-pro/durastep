@@ -34,6 +34,9 @@ All notable changes to Durastep are recorded here. The format follows
 - The README follows the order a reader needs: what Durastep is, the chaos demo, a short example, the proof, a
   three-command quickstart, features, limits, related work, non-goals and the roadmap. Details moved to the
   guides.
+- A `quickstart` CI job takes the quickstart commands from the README, runs them as written in an empty folder
+  on a fresh machine, with the clone pointed at the code under test, and then runs the chaos script, so the
+  README cannot drift from what works.
 - New module `durastep-opentelemetry`: `DurastepTracing.of(openTelemetry)`. The Spring Boot starter uses it when
   an `OpenTelemetry` bean is present.
 
