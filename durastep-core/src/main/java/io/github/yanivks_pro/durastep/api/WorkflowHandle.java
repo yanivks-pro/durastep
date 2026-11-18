@@ -9,6 +9,9 @@ import java.util.concurrent.TimeoutException;
 /**
  * A reference to one workflow, used to wait for its result.
  *
+ * <p>Durastep provides the implementation. This interface is not meant to be implemented by
+ * applications, and it may gain methods in minor releases.
+ *
  * @param <O> the type of the workflow's result
  */
 public interface WorkflowHandle<O> {

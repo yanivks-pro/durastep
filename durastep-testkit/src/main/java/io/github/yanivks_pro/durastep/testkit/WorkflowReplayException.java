@@ -10,6 +10,7 @@ public final class WorkflowReplayException extends AssertionError {
 
   private static final long serialVersionUID = 1L;
 
+  /** One line per history that failed, naming the file and what went wrong. */
   private final String[] failures;
 
   WorkflowReplayException(String summary, List<String> failures) {

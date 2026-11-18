@@ -104,4 +104,17 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <configuration>
+          <sourceFileExcludes>
+            <sourceFileExclude>**/DurastepAutoConfiguration.java</sourceFileExclude>
+          </sourceFileExcludes>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>

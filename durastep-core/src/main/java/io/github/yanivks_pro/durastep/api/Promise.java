@@ -18,6 +18,9 @@ import java.util.List;
  * return flight.get() + " and " + hotel.get();
  * }</pre>
  *
+ * <p>Durastep provides the implementation. This interface is not meant to be implemented by
+ * applications, and it may gain methods in minor releases.
+ *
  * @param <T> the type of the branch's result
  */
 public interface Promise<T> {

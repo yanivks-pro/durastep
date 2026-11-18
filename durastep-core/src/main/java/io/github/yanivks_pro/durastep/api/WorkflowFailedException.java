@@ -19,7 +19,10 @@ public final class WorkflowFailedException extends RuntimeException {
 
   private static final long serialVersionUID = 1L;
 
+  /** The failed workflow's ID, or {@code null} when thrown by workflow code. */
   private final String workflowId;
+
+  /** The class name of the error that failed the workflow, or {@code null}. */
   private final String failureType;
 
   /**

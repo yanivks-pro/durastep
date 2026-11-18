@@ -10,7 +10,10 @@ public final class WorkflowCancelledException extends RuntimeException {
 
   private static final long serialVersionUID = 1L;
 
+  /** The cancelled workflow's ID. */
   private final String workflowId;
+
+  /** Why it was cancelled, or {@code null}. */
   private final String reason;
 
   /**

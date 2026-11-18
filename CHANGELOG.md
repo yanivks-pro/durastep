@@ -37,6 +37,13 @@ All notable changes to Durastep are recorded here. The format follows
 - A `quickstart` CI job takes the quickstart commands from the README, runs them as written in an empty folder
   on a fresh machine, with the clone pointed at the code under test, and then runs the chaos script, so the
   README cannot drift from what works.
+- The README defines the public API that semantic versioning covers from 1.0, and an architecture test fails the
+  build if a public API type ever exposes an internal one. The interfaces Durastep implements say in their
+  Javadoc that they may gain methods in minor releases.
+- The build fails if the public API's Javadoc is incomplete, checked with doclint on every published module.
+- The nightly job replays 5,000 random cases per replay property, and every build 300.
+- A chart of throughput by number of engines, before and after the notify fix, in the README and the benchmarks.
+- `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and issue and pull request templates.
 - New module `durastep-opentelemetry`: `DurastepTracing.of(openTelemetry)`. The Spring Boot starter uses it when
   an `OpenTelemetry` bean is present.
 

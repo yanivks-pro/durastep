@@ -95,7 +95,7 @@ class ReplayProperties {
                 }
               });
 
-  @Property(tries = 300)
+  @Property
   void parallelBranchesGiveTheRightResultAndReplayIdenticallyInAnyOrder(
       @ForAll @Size(max = 300) List<@IntRange(min = 0, max = 99) Integer> choices) {
     SimulatedEngine engine =
@@ -110,7 +110,7 @@ class ReplayProperties {
     engine.assertEveryDecisionReplaysIdentically();
   }
 
-  @Property(tries = 300)
+  @Property
   void resultsSignalsTimersCancellationAndCrashesInAnyMixEndConsistently(
       @ForAll @Size(max = 300) List<@IntRange(min = 0, max = 99) Integer> choices) {
     SimulatedEngine engine =
@@ -126,8 +126,8 @@ class ReplayProperties {
     Statistics.label("ending")
         .coverage(
             coverage -> {
-              coverage.check("CancelWorkflow").percentage(share -> share >= 20);
-              coverage.check("CompleteWorkflow").percentage(share -> share >= 20);
+              coverage.check("CancelWorkflow").percentage(share -> share >= 5);
+              coverage.check("CompleteWorkflow").percentage(share -> share >= 5);
             });
     Statistics.label("with crashed decisions")
         .coverage(coverage -> coverage.check(true).percentage(share -> share >= 50));

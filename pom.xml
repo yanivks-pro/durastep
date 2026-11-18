@@ -79,6 +79,7 @@
     <jacoco-maven-plugin.version>0.8.16</jacoco-maven-plugin.version>
     <exec-maven-plugin.version>3.6.4</exec-maven-plugin.version>
     <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
+    <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
     <exec.skip>true</exec.skip>
   </properties>
 
@@ -275,6 +276,25 @@
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>exec-maven-plugin</artifactId>
           <version>${exec-maven-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-javadoc-plugin</artifactId>
+          <version>${maven-javadoc-plugin.version}</version>
+          <configuration>
+            <doclint>all</doclint>
+            <failOnWarnings>true</failOnWarnings>
+            <quiet>true</quiet>
+          </configuration>
+          <executions>
+            <execution>
+              <id>check-public-api-javadoc</id>
+              <phase>verify</phase>
+              <goals>
+                <goal>javadoc-no-fork</goal>
+              </goals>
+            </execution>
+          </executions>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>

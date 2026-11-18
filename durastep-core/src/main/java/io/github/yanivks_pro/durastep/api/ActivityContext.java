@@ -13,6 +13,9 @@ import io.github.yanivks_pro.durastep.activity.ActivityScope;
  *   return paymentApi.charge(orderId, cents, ActivityContext.current().idempotencyKey());
  * }
  * }</pre>
+ *
+ * <p>Durastep provides the implementation. This interface is not meant to be implemented by
+ * applications, and it may gain methods in minor releases.
  */
 public interface ActivityContext {
 
