@@ -31,6 +31,9 @@ All notable changes to Durastep are recorded here. The format follows
 - Documentation: `docs/architecture.md` with diagrams of the components, the life of a step, the data model and
   leases and fencing, and guides to getting started, writing workflows, operations and security in `docs/guides`.
   The security guide moved there from `docs/security.md`.
+- The README follows the order a reader needs: what Durastep is, the chaos demo, a short example, the proof, a
+  three-command quickstart, features, limits, related work, non-goals and the roadmap. Details moved to the
+  guides.
 - New module `durastep-opentelemetry`: `DurastepTracing.of(openTelemetry)`. The Spring Boot starter uses it when
   an `OpenTelemetry` bean is present.
 
