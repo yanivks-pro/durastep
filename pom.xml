@@ -24,6 +24,7 @@
     <module>durastep-core</module>
     <module>durastep-testkit</module>
     <module>durastep-micrometer</module>
+    <module>durastep-dashboard</module>
     <module>durastep-cli</module>
     <module>durastep-spring-boot-starter</module>
     <module>durastep-examples</module>
@@ -140,6 +141,11 @@
       <dependency>
         <groupId>io.github.yanivks-pro</groupId>
         <artifactId>durastep-testkit</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.yanivks-pro</groupId>
+        <artifactId>durastep-dashboard</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

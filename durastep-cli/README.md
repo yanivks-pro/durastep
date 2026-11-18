@@ -37,8 +37,9 @@ status:  done, tracking number TRK-A9BB12D2
 | `show <id>` | The workflow, the error that blocks it, and a readable timeline |
 | `history <id>` | The raw history events |
 | `stats` | Running and blocked workflows, waiting work and its age |
+| `dashboard [--port P] [--bind A]` | Serves the read-only [dashboard](../durastep-dashboard/README.md) on `http://127.0.0.1:8099/` |
 
-Every command takes `--json` for scripts.
+Every command except `dashboard` takes `--json` for scripts.
 
 ## Fix
 

@@ -43,6 +43,8 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -986,6 +988,26 @@ public final class JdbcWorkflowStore {
         });
   }
 
+  public Map<WorkflowState, Long> countByState() {
+    return transactions.inTransaction(
+        "count workflows by state",
+        connection -> {
+          Map<WorkflowState, Long> counts = new EnumMap<>(WorkflowState.class);
+          for (WorkflowState state : WorkflowState.values()) {
+            counts.put(state, 0L);
+          }
+          try (PreparedStatement statement =
+                  connection.prepareStatement(
+                      "SELECT state, count(*) FROM " + workflows + " GROUP BY state");
+              ResultSet row = statement.executeQuery()) {
+            while (row.next()) {
+              counts.put(WorkflowState.valueOf(row.getString(1)), row.getLong(2));
+            }
+          }
+          return Collections.unmodifiableMap(counts);
+        });
+  }
+
   public OptionalInt deleteFinishedWorkflows(Duration closedBefore, int limit) {
     return transactions.inTransaction(
         "delete finished workflows",
@@ -1031,7 +1053,11 @@ public final class JdbcWorkflowStore {
   }
 
   public List<StoredWorkflow> list(
-      Optional<WorkflowState> state, Optional<String> type, Optional<Boolean> blocked, int limit) {
+      Optional<WorkflowState> state,
+      Optional<String> type,
+      Optional<Boolean> blocked,
+      Optional<String> idPrefix,
+      int limit) {
     return transactions.inTransaction(
         "list workflows",
         connection -> {
@@ -1050,6 +1076,11 @@ public final class JdbcWorkflowStore {
           blocked.ifPresent(
               wanted -> {
                 conditions.add("blocked = ?");
+                parameters.add(wanted);
+              });
+          idPrefix.ifPresent(
+              wanted -> {
+                conditions.add("starts_with(id, ?)");
                 parameters.add(wanted);
               });
           String where = conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);

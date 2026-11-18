@@ -23,12 +23,15 @@ public final class WorkflowQuery {
   private final WorkflowState state;
   private final String type;
   private final Boolean blocked;
+  private final String idPrefix;
   private final int limit;
 
-  private WorkflowQuery(WorkflowState state, String type, Boolean blocked, int limit) {
+  private WorkflowQuery(
+      WorkflowState state, String type, Boolean blocked, String idPrefix, int limit) {
     this.state = state;
     this.type = type;
     this.blocked = blocked;
+    this.idPrefix = idPrefix;
     this.limit = limit;
   }
 
@@ -38,7 +41,7 @@ public final class WorkflowQuery {
    * @return a query without filters
    */
   public static WorkflowQuery all() {
-    return new WorkflowQuery(null, null, null, DEFAULT_LIMIT);
+    return new WorkflowQuery(null, null, null, null, DEFAULT_LIMIT);
   }
 
   /**
@@ -48,7 +51,8 @@ public final class WorkflowQuery {
    * @return the narrowed query
    */
   public WorkflowQuery state(WorkflowState state) {
-    return new WorkflowQuery(Objects.requireNonNull(state, "state"), type, blocked, limit);
+    return new WorkflowQuery(
+        Objects.requireNonNull(state, "state"), type, blocked, idPrefix, limit);
   }
 
   /**
@@ -69,7 +73,8 @@ public final class WorkflowQuery {
    * @return the narrowed query
    */
   public WorkflowQuery type(String typeName) {
-    return new WorkflowQuery(state, Objects.requireNonNull(typeName, "typeName"), blocked, limit);
+    return new WorkflowQuery(
+        state, Objects.requireNonNull(typeName, "typeName"), blocked, idPrefix, limit);
   }
 
   /**
@@ -79,7 +84,26 @@ public final class WorkflowQuery {
    * @return the narrowed query
    */
   public WorkflowQuery blocked(boolean blocked) {
-    return new WorkflowQuery(state, type, blocked, limit);
+    return new WorkflowQuery(state, type, blocked, idPrefix, limit);
+  }
+
+  /**
+   * Returns a copy of this query that keeps only workflows whose ID starts with the given text. The
+   * text is matched as it is: {@code %} and {@code _} have no special meaning.
+   *
+   * <pre>{@code
+   * client.list(WorkflowQuery.all().idStartsWith("order-"));
+   * }</pre>
+   *
+   * @param prefix the start of the IDs to keep
+   * @return the narrowed query
+   * @throws IllegalArgumentException if the prefix is empty
+   */
+  public WorkflowQuery idStartsWith(String prefix) {
+    if (Objects.requireNonNull(prefix, "prefix").isEmpty()) {
+      throw new IllegalArgumentException("the ID prefix must not be empty");
+    }
+    return new WorkflowQuery(state, type, blocked, prefix, limit);
   }
 
   /**
@@ -94,7 +118,7 @@ public final class WorkflowQuery {
       throw new IllegalArgumentException(
           "the limit must be between 1 and " + MAX_LIMIT + ", was " + limit);
     }
-    return new WorkflowQuery(state, type, blocked, limit);
+    return new WorkflowQuery(state, type, blocked, idPrefix, limit);
   }
 
   Optional<WorkflowState> stateFilter() {
@@ -107,6 +131,10 @@ public final class WorkflowQuery {
 
   Optional<Boolean> blockedFilter() {
     return Optional.ofNullable(blocked);
+  }
+
+  Optional<String> idPrefixFilter() {
+    return Optional.ofNullable(idPrefix);
   }
 
   int maxResults() {

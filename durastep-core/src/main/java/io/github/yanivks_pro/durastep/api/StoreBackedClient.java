@@ -8,6 +8,7 @@ import io.github.yanivks_pro.durastep.store.StoredWorkflow;
 import java.lang.reflect.Type;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -50,6 +51,11 @@ final class StoreBackedClient implements DurastepClient {
   @Override
   public EngineStats stats() {
     return store.stats();
+  }
+
+  @Override
+  public Map<WorkflowState, Long> countByState() {
+    return store.countByState();
   }
 
   @Override
@@ -174,7 +180,12 @@ final class StoreBackedClient implements DurastepClient {
   public List<WorkflowDescription> list(WorkflowQuery query) {
     Objects.requireNonNull(query, "query");
     return store
-        .list(query.stateFilter(), query.typeFilter(), query.blockedFilter(), query.maxResults())
+        .list(
+            query.stateFilter(),
+            query.typeFilter(),
+            query.blockedFilter(),
+            query.idPrefixFilter(),
+            query.maxResults())
         .stream()
         .map(StoreBackedClient::describe)
         .toList();

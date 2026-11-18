@@ -208,6 +208,9 @@ Every command can print JSON. Commands that change workflows ask for confirmatio
 in the workflow's history; the same commands exist on the client: `retryNow`, `terminate`, `retryAllBlocked` and
 `rerun`.
 
+To look rather than ask, `durastep dashboard` serves a read-only [dashboard](durastep-dashboard/README.md) on
+`http://127.0.0.1:8099/`: workflows by state, blocked workflows, waiting work, and a list to search and filter.
+
 To watch it, start Prometheus and Grafana with the load generator from the examples:
 
 ```bash
@@ -389,6 +392,9 @@ Every significant decision is recorded as an [Architecture Decision Record](docs
 - **Retention and size limits.** Old finished workflows are deleted in small batches under an advisory lock;
   oversized data and runaway histories are stopped with a clear next step.
   [ADR-0024](docs/adr/0024-retention-and-size-limits.md)
+- **A read-only dashboard without a web framework.** The JDK's own HTTP server and HTML written in Java, with no
+  JavaScript; it reads through the public client and cannot change anything.
+  [ADR-0028](docs/adr/0028-read-only-dashboard.md)
 - **A Spring Boot starter in its own module.** Spring's dependency versions stay out of the core and the other
   modules. [ADR-0025](docs/adr/0025-spring-boot-starter-module.md)
 - **Versioning with markers in the history.** A version check records its answer without becoming a step, so
@@ -420,6 +426,7 @@ runs the chaos test, which takes a few minutes.
 | `durastep-core` | The engine, plain Java |
 | `durastep-testkit` | `WorkflowReplayer` for testing new code against saved histories |
 | `durastep-micrometer` | Micrometer metrics |
+| `durastep-dashboard` | A read-only web dashboard |
 | `durastep-cli` | The command-line tool |
 | `durastep-spring-boot-starter` | Spring Boot 4 integration |
 | `durastep-examples` | Runnable examples and the load generator; not released |

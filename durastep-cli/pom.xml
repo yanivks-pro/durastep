@@ -20,6 +20,10 @@
       <artifactId>durastep-core</artifactId>
     </dependency>
     <dependency>
+      <groupId>io.github.yanivks-pro</groupId>
+      <artifactId>durastep-dashboard</artifactId>
+    </dependency>
+    <dependency>
       <groupId>info.picocli</groupId>
       <artifactId>picocli</artifactId>
     </dependency>
