@@ -1,0 +1,48 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      workflows:
+        description: Workflows per drain
+        default: "10000"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Describe the machine
+        run: |
+          mkdir -p target/benchmarks
+          { nproc; free -h; lscpu | grep -E 'Model name|^CPU\(s\)'; docker version --format '{{.Server.Version}}'; } \
+            | tee target/benchmarks/machine.txt
+      - name: Throughput, latency and timers
+        env:
+          WORKFLOWS: ${{ inputs.workflows || '10000' }}
+        run: |
+          case "$WORKFLOWS" in
+            *[!0-9]*|"") echo "::error::workflows must be a whole number"; exit 1 ;;
+          esac
+          make bench ARGS="--workflows $WORKFLOWS --out target/benchmarks/all"
+      - name: Scaling and backlog
+        env:
+          WORKFLOWS: ${{ inputs.workflows || '10000' }}
+        run: make bench-scaling ARGS="--workflows $WORKFLOWS --out target/benchmarks/scaling"
+      - name: Replay cost
+        run: make bench-replay ARGS="-rf json -rff target/benchmarks/replay.json"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: benchmark-results
+          path: target/benchmarks/
+          if-no-files-found: ignore
